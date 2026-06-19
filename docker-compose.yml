@@ -1,0 +1,73 @@
+# CaptureOS local stack. `docker compose up` boots the whole system locally.
+# Cloud equivalents (Cloud SQL, Cloud Run, Pub/Sub) replace these in prod via config.
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: captureos-db
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-captureos}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-captureos}
+      POSTGRES_DB: ${POSTGRES_DB:-captureos}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./infra/db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-captureos} -d ${POSTGRES_DB:-captureos}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  api:
+    build:
+      context: ./apps/api
+    container_name: captureos-api
+    env_file: .env
+    environment:
+      # Inside the compose network the DB host is the service name.
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-captureos}:${POSTGRES_PASSWORD:-captureos}@db:5432/${POSTGRES_DB:-captureos}
+      DATABASE_URL_SYNC: postgresql+psycopg://${POSTGRES_USER:-captureos}:${POSTGRES_PASSWORD:-captureos}@db:5432/${POSTGRES_DB:-captureos}
+      RUN_MIGRATIONS_ON_START: "true"
+    ports:
+      - "${API_PORT:-8000}:8000"
+    volumes:
+      - ./apps/api:/app
+      - blobs:/app/.data/blobs
+    depends_on:
+      db:
+        condition: service_healthy
+    command: ["uvicorn", "captureos.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+
+  worker:
+    build:
+      context: ./apps/api
+    container_name: captureos-worker
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-captureos}:${POSTGRES_PASSWORD:-captureos}@db:5432/${POSTGRES_DB:-captureos}
+      DATABASE_URL_SYNC: postgresql+psycopg://${POSTGRES_USER:-captureos}:${POSTGRES_PASSWORD:-captureos}@db:5432/${POSTGRES_DB:-captureos}
+    volumes:
+      - ./apps/api:/app
+      - blobs:/app/.data/blobs
+    depends_on:
+      db:
+        condition: service_healthy
+    command: ["python", "-m", "captureos.worker.main"]
+
+  web:
+    build:
+      context: ./apps/web
+    container_name: captureos-web
+    environment:
+      NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
+      NEXT_PUBLIC_AUTH_PROVIDER: local
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+    profiles: ["full"]   # `docker compose --profile full up` to include web; otherwise run `pnpm dev` locally.
+
+volumes:
+  pgdata:
+  blobs:
