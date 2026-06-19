@@ -15,6 +15,7 @@ from captureos.models.filings import (
     GeneratedDocument,
     Recommendation,
 )
+from captureos.models.jobs import WorkflowJob
 from captureos.models.opportunities import Opportunity
 from captureos.models.org import Organization, OrgMember, User
 from captureos.models.workflow import AgentRun, WorkflowRun, WorkflowStep
@@ -43,4 +44,5 @@ __all__ = [
     "AgentRun",
     "WorkflowRun",
     "WorkflowStep",
+    "WorkflowJob",
 ]

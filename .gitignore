@@ -50,3 +50,6 @@ coverage/
 
 # ---- GSD planning artifacts that are machine-local ----
 .planning/todos/pending/*.local.md
+
+# Local Claude Code session settings
+.claude/

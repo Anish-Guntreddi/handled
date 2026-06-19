@@ -45,6 +45,7 @@ async def _is_safe_public_url(url: str) -> bool:
             return False
     return True
 
+
 _SKIP_TAGS = {"script", "style", "noscript", "svg", "head"}
 
 

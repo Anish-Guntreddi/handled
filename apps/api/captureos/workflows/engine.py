@@ -10,14 +10,14 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from captureos.agents.base import AgentContext
 from captureos.audit import record_event
 from captureos.logging import get_logger
 from captureos.models.enums import StepStatus, WorkflowStatus
-from captureos.models.workflow import WorkflowRun, WorkflowStep
+from captureos.models.workflow import AgentRun, WorkflowRun, WorkflowStep
 
 logger = get_logger(__name__)
 
@@ -130,8 +130,28 @@ async def run_pipeline(
         step.status = StepStatus.done.value
         await session.flush()
 
+    # Roll up token usage from this run's agent invocations (cost visibility, NFR-6/FR-AU-1).
+    totals = (
+        await session.execute(
+            select(
+                func.coalesce(func.sum(AgentRun.input_tokens), 0),
+                func.coalesce(func.sum(AgentRun.output_tokens), 0),
+            )
+            .join(WorkflowStep, WorkflowStep.id == AgentRun.step_id)
+            .where(WorkflowStep.run_id == run.id)
+        )
+    ).one()
+    run.total_input_tokens, run.total_output_tokens = int(totals[0]), int(totals[1])
+
     run.status = WorkflowStatus.succeeded.value
     if time_saved_minutes is not None:
         run.time_saved_minutes = time_saved_minutes
     await session.flush()
-    await record_event("workflow.succeeded", org_id=run.org_id, run_id=run.id, status="succeeded")
+    await record_event(
+        "workflow.succeeded",
+        org_id=run.org_id,
+        run_id=run.id,
+        status="succeeded",
+        input_tokens=run.total_input_tokens,
+        output_tokens=run.total_output_tokens,
+    )

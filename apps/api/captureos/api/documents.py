@@ -26,7 +26,7 @@ from captureos.schemas.document import (
     PasteRequest,
 )
 from captureos.schemas.workflow import WorkflowRunCreated
-from captureos.workflows.dispatch import schedule_workflow
+from captureos.workflows.dispatch import dispatch_run
 
 router = APIRouter(prefix="/orgs/{org_id}/documents", tags=["documents"])
 blobs_router = APIRouter(prefix="/orgs/{org_id}/blobs", tags=["documents"])
@@ -163,8 +163,8 @@ async def ingest_document(
         input_params=params,
     )
     session.add(run)
-    await session.commit()  # durably persist before dispatching to the worker
-    schedule_workflow(background_tasks, run.id)
+    await session.flush()
+    await dispatch_run(session, background_tasks, run)
     return WorkflowRunCreated(workflow_run_id=run.id)
 
 
@@ -192,8 +192,8 @@ async def paste_document(
         input_params={"document_id": str(doc_id), "raw_text": body.raw_text},
     )
     session.add(run)
-    await session.commit()  # commit doc + run before dispatching to the worker
-    schedule_workflow(background_tasks, run.id)
+    await session.flush()
+    await dispatch_run(session, background_tasks, run)
     return WorkflowRunCreated(workflow_run_id=run.id)
 
 
