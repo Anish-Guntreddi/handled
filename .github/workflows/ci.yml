@@ -1,0 +1,89 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  api:
+    name: API (lint, type, test)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: captureos
+          POSTGRES_PASSWORD: captureos
+          POSTGRES_DB: captureos_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U captureos -d captureos_test"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      CAPTUREOS_ENV: ci
+      LLM_PROVIDER: mock
+      EMBEDDINGS_PROVIDER: mock
+      STORAGE_PROVIDER: local
+      QUEUE_PROVIDER: local
+      DOCPARSE_PROVIDER: local
+      AUDIT_SINK: postgres
+      BILLING_PROVIDER: mock
+      JWT_SECRET: ci-only-insecure-secret-key-at-least-32-characters
+      DATABASE_URL: postgresql+asyncpg://captureos:captureos@localhost:5432/captureos_test
+      DATABASE_URL_SYNC: postgresql+psycopg://captureos:captureos@localhost:5432/captureos_test
+    defaults:
+      run:
+        working-directory: apps/api
+    steps:
+      # Only first-party actions/* are used (GitHub-owned); no third-party actions
+      # so there is no unpinned-supply-chain surface to mitigate.
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install uv
+        run: pipx install uv
+      - name: Enable required Postgres extensions
+        run: PGPASSWORD=captureos psql -h localhost -U captureos -d captureos_test -c "CREATE EXTENSION IF NOT EXISTS vector;" -c "CREATE EXTENSION IF NOT EXISTS pg_trgm;"
+      - name: Install dependencies
+        run: uv sync --frozen || uv sync
+      - name: Migrate
+        run: uv run alembic upgrade head
+      - name: Lint
+        run: uv run ruff check .
+      - name: Type check
+        run: uv run mypy captureos
+      - name: Test
+        run: uv run pytest -q
+
+  web:
+    name: Web (lint, type, build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Enable pnpm via corepack
+        run: corepack enable && corepack prepare pnpm@10.22.0 --activate
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile || pnpm install
+      - name: Lint
+        run: pnpm lint
+      - name: Type check
+        run: pnpm typecheck
+      - name: Build
+        run: pnpm build
+        env:
+          NEXT_PUBLIC_API_BASE_URL: http://localhost:8000

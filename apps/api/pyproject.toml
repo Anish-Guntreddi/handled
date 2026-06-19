@@ -1,0 +1,80 @@
+[project]
+name = "captureos-api"
+version = "0.1.0"
+description = "CaptureOS API service and agent worker"
+requires-python = ">=3.12"
+readme = "README.md"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.5",
+    "email-validator>=2.2",
+    "sqlalchemy[asyncio]>=2.0.36",
+    "asyncpg>=0.30",
+    "psycopg[binary]>=3.2",
+    "alembic>=1.14",
+    "pgvector>=0.3.6",
+    "pyjwt>=2.10",
+    "argon2-cffi>=23.1",
+    "httpx>=0.28",
+    "structlog>=24.4",
+    "python-multipart>=0.0.12",
+    "tenacity>=9.0",
+]
+
+[project.optional-dependencies]
+# Cloud providers — installed only when deploying to GCP. The app runs without these.
+gcp = [
+    "google-genai>=0.3",
+    "google-cloud-storage>=2.18",
+    "google-cloud-pubsub>=2.27",
+    "google-cloud-documentai>=3.1",
+    "google-cloud-bigquery>=3.27",
+    "firebase-admin>=6.5",
+]
+billing = ["stripe>=11.1"]
+# Document parsing for ingestion (M1). Lightweight, pure-python.
+docparse = ["pypdf>=5.1", "python-docx>=1.1"]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "anyio>=4.6",
+    "ruff>=0.8",
+    "mypy>=1.13",
+]
+
+[tool.uv]
+package = false
+# Supply-chain cooldown: don't resolve versions published in the last ~7 days,
+# when a compromised release is most likely still undetected. Bump as needed.
+exclude-newer = "2026-06-12T00:00:00Z"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = ["migrations/versions"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "C4", "SIM", "ASYNC", "S"]
+# S101 assert in tests is fine; handled per-file below.
+ignore = ["B008"]  # FastAPI Depends() in defaults is idiomatic.
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101", "S105", "S106", "S107"]
+"captureos/scripts/*" = ["S101"]
+
+[tool.mypy]
+python_version = "3.12"
+plugins = ["pydantic.mypy"]
+ignore_missing_imports = true
+disallow_untyped_defs = false
+warn_unused_ignores = false
+exclude = ["migrations/"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+filterwarnings = ["ignore::DeprecationWarning"]
