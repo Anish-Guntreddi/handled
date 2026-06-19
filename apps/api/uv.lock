@@ -208,6 +208,8 @@ dependencies = [
     { name = "pydantic" },
     { name = "pydantic-settings" },
     { name = "pyjwt" },
+    { name = "pypdf" },
+    { name = "python-docx" },
     { name = "python-multipart" },
     { name = "sqlalchemy", extra = ["asyncio"] },
     { name = "structlog" },
@@ -218,10 +220,6 @@ dependencies = [
 [package.optional-dependencies]
 billing = [
     { name = "stripe" },
-]
-docparse = [
-    { name = "pypdf" },
-    { name = "python-docx" },
 ]
 gcp = [
     { name = "firebase-admin" },
@@ -260,8 +258,8 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.9" },
     { name = "pydantic-settings", specifier = ">=2.5" },
     { name = "pyjwt", specifier = ">=2.10" },
-    { name = "pypdf", marker = "extra == 'docparse'", specifier = ">=5.1" },
-    { name = "python-docx", marker = "extra == 'docparse'", specifier = ">=1.1" },
+    { name = "pypdf", specifier = ">=5.1" },
+    { name = "python-docx", specifier = ">=1.1" },
     { name = "python-multipart", specifier = ">=0.0.12" },
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.36" },
     { name = "stripe", marker = "extra == 'billing'", specifier = ">=11.1" },
@@ -269,7 +267,7 @@ requires-dist = [
     { name = "tenacity", specifier = ">=9.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.32" },
 ]
-provides-extras = ["gcp", "billing", "docparse"]
+provides-extras = ["gcp", "billing"]
 
 [package.metadata.requires-dev]
 dev = [

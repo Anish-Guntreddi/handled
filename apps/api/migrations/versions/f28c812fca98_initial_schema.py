@@ -63,7 +63,6 @@ def upgrade() -> None:
     sa.Column('occurred_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
     sa.Column('id', sa.UUID(), nullable=False),
     sa.Column('org_id', sa.UUID(), nullable=True),
-    sa.ForeignKeyConstraint(['org_id'], ['organizations.id'], name=op.f('fk_audit_events_org_id_organizations'), ondelete='CASCADE'),
     sa.PrimaryKeyConstraint('id', name=op.f('pk_audit_events'))
     )
     op.create_index(op.f('ix_audit_events_action'), 'audit_events', ['action'], unique=False)

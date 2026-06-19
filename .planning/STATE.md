@@ -9,12 +9,20 @@ See: .planning/PROJECT.md (updated 2026-06-19)
 
 ## Current Position
 
-Phase: 2 of 7 (M1 Company Brain + ingestion) — STARTING
-Plan: 1 of 1 (Phase 1 complete)
-Status: Phase 1 (M0) COMPLETE — gate passed. Ready to plan/execute Phase 2.
-Last activity: 2026-06-19 — M0 built, hardened, gated (codex + security + qa), committed.
+Phase: 3 of 7 (M2 GovCon scanner + workflow engine) — STARTING
+Plan: 1 of 1 (Phases 1–2 complete)
+Status: Phases 1 (M0) + 2 (M1) COMPLETE — gates passed. Ready to execute Phase 3.
+Last activity: 2026-06-19 — M1 built, hardened (SSRF guard, upload cap), gated, committed.
 
-Progress: [██░░░░░░░░] ~14% (1 of 7 phases)
+Progress: [███░░░░░░░] ~29% (2 of 7 phases)
+
+### Phase 2 (M1) — DONE ✅ (gate passed)
+Agent base class (typed I/O, mock+gemini, schema-retry, agent_run+audit), sync workflow
+engine (runs→steps→agent_runs) via BackgroundTasks (commit-then-dispatch), ingestion
+(parse→chunk→embed→pgvector, content-hash dedupe), website fetch (SSRF-guarded), Company
+Brain agent + service, company-profile + documents + workflow-runs APIs, org workspace UI.
+36 pytest + 4 live HTTP checks; ruff+mypy+web-build clean. Fixed: silent audit-FK failure
+(dropped FK on audit_events.org_id), commit-then-dispatch, SSRF, upload size cap.
 
 ### Phase 1 (M0) — DONE ✅ (gate passed)
 Gate: codex independent review (clean) · security-audit (4 fixes: login timing oracle,

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, type FormEvent } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
@@ -75,19 +76,19 @@ export default function DashboardPage() {
 
         <ul className="mt-3 space-y-2">
           {me?.orgs.map((org) => (
-            <li
-              key={org.orgId}
-              className="flex items-center justify-between rounded-xl border border-neutral-200 bg-white px-4 py-3"
-            >
-              <div>
-                <p className="font-medium">{org.name}</p>
-                <p className="text-xs text-neutral-500">
-                  Role: {org.role} · Plan: {org.plan}
-                </p>
-              </div>
-              <span className="rounded-full bg-neutral-100 px-2.5 py-1 text-xs text-neutral-600">
-                {org.orgId.slice(0, 8)}
-              </span>
+            <li key={org.orgId}>
+              <Link
+                href={`/orgs/${org.orgId}`}
+                className="flex items-center justify-between rounded-xl border border-neutral-200 bg-white px-4 py-3 transition hover:border-neutral-400 hover:bg-neutral-50"
+              >
+                <div>
+                  <p className="font-medium">{org.name}</p>
+                  <p className="text-xs text-neutral-500">
+                    Role: {org.role} · Plan: {org.plan}
+                  </p>
+                </div>
+                <span className="text-sm text-neutral-400">Open →</span>
+              </Link>
             </li>
           ))}
           {me && me.orgs.length === 0 && (

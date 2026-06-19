@@ -1,6 +1,8 @@
 // Typed fetch client for the CaptureOS API. Attaches the bearer token, understands
 // the {error:{code,message,details}} contract, and never leaks raw responses.
 
+import type { WorkflowRun } from "./types";
+
 const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/$/, "") ?? "http://localhost:8000";
 
@@ -50,4 +52,30 @@ export async function apiFetch<T>(path: string, opts: RequestOptions = {}): Prom
     throw new ApiError(res.status, err.code ?? "error", err.message ?? "Request failed", err.details);
   }
   return data as T;
+}
+
+// Raw PUT for the local upload sink (the returned uploadUrl already includes /api/v1).
+export async function uploadBlob(uploadUrl: string, data: Blob): Promise<void> {
+  const headers: Record<string, string> = {};
+  const token = tokenGetter();
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  if (data.type) headers["Content-Type"] = data.type;
+  const res = await fetch(`${API_BASE}${uploadUrl}`, { method: "PUT", headers, body: data });
+  if (!res.ok) throw new ApiError(res.status, "upload_failed", "Upload failed");
+}
+
+const TERMINAL = new Set(["succeeded", "failed", "needs_input"]);
+
+// Poll a long-running workflow until it reaches a terminal state (PRD §9.4).
+export async function pollWorkflowRun(
+  orgId: string,
+  runId: string,
+  { maxAttempts = 40, intervalMs = 500 }: { maxAttempts?: number; intervalMs?: number } = {},
+): Promise<WorkflowRun> {
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const run = await apiFetch<WorkflowRun>(`/orgs/${orgId}/workflow-runs/${runId}`);
+    if (TERMINAL.has(run.status)) return run;
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+  throw new ApiError(408, "timeout", "Workflow did not complete in time");
 }

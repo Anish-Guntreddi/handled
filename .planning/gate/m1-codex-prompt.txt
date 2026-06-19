@@ -1,0 +1,16 @@
+Independent review of CaptureOS Phase M1 (Company Brain + ingestion). Spec:
+captureos-engineering-prd.md (FR-CB-*, FR-DI-*, CON-2/3/5). Review the NEW code since the
+M0 gate: captureos/agents/ (base.py, company_brain.py), captureos/workflows/ (engine.py,
+pipelines.py, dispatch.py), captureos/ingestion/ (chunking, service, website), captureos/
+services/ (company_brain, documents), and api/ (company_profile, documents, workflows).
+
+Find REAL defects only, with file:line + severity + fix. Prioritize:
+1. SSRF: fetch_website_text fetches a user-supplied URL server-side — can it reach
+   localhost/169.254.169.254/internal hosts or non-http schemes?
+2. Resource/DoS: blob upload reads the full body into memory with no size cap.
+3. CON-2: is every materialized evidence_item sourced? Any unsourced claim path?
+4. CON-5: org isolation on documents/blobs/workflow-runs and the agent_run/audit rows.
+5. Correctness: content-hash dedupe (FR-DI-6), schema-retry (FR-RE-2 / §10.5), the
+   commit-then-dispatch handoff, override preservation on rebuild (FR-CB-6).
+6. Any silent failure or swallowed exception that hides a real error.
+End with a VERDICT and the must-fix list.
