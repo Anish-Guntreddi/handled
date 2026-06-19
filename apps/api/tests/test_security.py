@@ -38,7 +38,9 @@ async def test_login_records_org_less_audit_event(client: AsyncClient) -> None:
 
     async with get_sessionmaker()() as session:
         rows = (
-            await session.execute(select(AuditEvent).where(AuditEvent.action == "auth.login"))
-        ).scalars().all()
+            (await session.execute(select(AuditEvent).where(AuditEvent.action == "auth.login")))
+            .scalars()
+            .all()
+        )
     assert len(rows) >= 1
     assert rows[0].org_id is None

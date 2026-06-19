@@ -75,13 +75,18 @@ def _ensure_database_exists() -> None:
 
 @pytest.fixture(scope="session", autouse=True)
 def _schema() -> None:
-    """Create the test database + extensions + schema once (sync engine, no loop)."""
+    """Create the test database + extensions + schema once (sync engine, no loop).
+
+    Drops the whole public schema (CASCADE) rather than metadata.drop_all so a stale
+    schema from a previous run — with constraints no longer in the model — can't block
+    a clean rebuild after a schema change."""
     _ensure_database_exists()
     sync_engine = create_engine(os.environ["DATABASE_URL_SYNC"], future=True)
     with sync_engine.begin() as conn:
+        conn.execute(text("DROP SCHEMA public CASCADE"))
+        conn.execute(text("CREATE SCHEMA public"))
         conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         conn.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
-    Base.metadata.drop_all(sync_engine)
     Base.metadata.create_all(sync_engine)
     sync_engine.dispose()
 

@@ -21,6 +21,8 @@ dependencies = [
     "structlog>=24.4",
     "python-multipart>=0.0.12",
     "tenacity>=9.0",
+    "pypdf>=5.1",
+    "python-docx>=1.1",
 ]
 
 [project.optional-dependencies]
@@ -34,8 +36,6 @@ gcp = [
     "firebase-admin>=6.5",
 ]
 billing = ["stripe>=11.1"]
-# Document parsing for ingestion (M1). Lightweight, pure-python.
-docparse = ["pypdf>=5.1", "python-docx>=1.1"]
 
 [dependency-groups]
 dev = [

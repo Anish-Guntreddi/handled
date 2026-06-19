@@ -10,7 +10,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, func
+from sqlalchemy import DateTime, Index, Integer, String, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -26,12 +26,13 @@ class AuditEvent(UUIDPKMixin, Base):
         Index("ix_audit_events_run", "run_id"),
     )
 
-    # Nullable: system/auth events (login, register) have no org context (CON-3, FR-AU-2).
+    # Nullable + NO FK on purpose: the audit stream is append-only and decoupled (matches
+    # the BigQuery design, PRD §8.4). It is written in its own transaction and must not be
+    # constrained by referential integrity to rows that may still be uncommitted in the
+    # caller's transaction, nor cascade-deleted when an org is removed (it's a legal record).
+    # System/auth events (login, register) also legitimately have no org (CON-3, FR-AU-2).
     org_id: Mapped[uuid.UUID | None] = mapped_column(
-        PGUUID(as_uuid=True),
-        ForeignKey("organizations.id", ondelete="CASCADE"),
-        nullable=True,
-        index=True,
+        PGUUID(as_uuid=True), nullable=True, index=True
     )
     filing_id: Mapped[uuid.UUID | None] = mapped_column(PGUUID(as_uuid=True), nullable=True)
     run_id: Mapped[uuid.UUID | None] = mapped_column(PGUUID(as_uuid=True), nullable=True)
