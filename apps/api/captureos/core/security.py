@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -23,8 +24,22 @@ def hash_password(plain: str) -> str:
 def verify_password(plain: str, hashed: str) -> bool:
     try:
         return _ph.verify(hashed, plain)
-    except (VerifyMismatchError, Exception):
+    except VerifyMismatchError:
         return False
+    except Exception:
+        # Malformed/legacy hash → treat as a failed verification rather than erroring.
+        return False
+
+
+# Precomputed hash used to spend comparable CPU on the "user not found" login path,
+# so response timing doesn't reveal whether an email is registered (anti-enumeration).
+_DUMMY_HASH = _ph.hash("captureos-timing-equalization-constant")  # noqa: S106
+
+
+def dummy_verify(plain: str) -> None:
+    """Run an Argon2 verification and discard the result (constant-ish timing)."""
+    with contextlib.suppress(Exception):
+        _ph.verify(_DUMMY_HASH, plain)
 
 
 def needs_rehash(hashed: str) -> bool:

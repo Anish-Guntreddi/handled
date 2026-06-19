@@ -16,7 +16,7 @@ from captureos.providers import get_audit_sink
 async def record_event(
     action: str,
     *,
-    org_id: str | uuid.UUID,
+    org_id: str | uuid.UUID | None = None,
     actor: ActorType | str = ActorType.system,
     actor_id: str | None = None,
     filing_id: str | uuid.UUID | None = None,
@@ -32,7 +32,7 @@ async def record_event(
 ) -> None:
     event: dict[str, Any] = {
         "action": action,
-        "org_id": str(org_id),
+        "org_id": str(org_id) if org_id else None,
         "actor": str(actor),
         "actor_id": actor_id,
         "filing_id": str(filing_id) if filing_id else None,

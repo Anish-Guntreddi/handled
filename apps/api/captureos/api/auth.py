@@ -3,6 +3,8 @@ Firebase SDK and skip register/login here."""
 
 from __future__ import annotations
 
+import uuid
+
 from fastapi import APIRouter, status
 from sqlalchemy import select
 
@@ -14,6 +16,7 @@ from captureos.core.security import (
     create_access_token,
     create_refresh_token,
     decode_token,
+    dummy_verify,
     hash_password,
     verify_password,
 )
@@ -64,6 +67,7 @@ async def register(body: RegisterRequest, session: SessionDep) -> TokenResponse:
             "org.created", org_id=org.id, actor=ActorType.user, actor_id=str(user.id)
         )
 
+    await record_event("auth.register", actor=ActorType.user, actor_id=str(user.id))
     return TokenResponse(
         access_token=create_access_token(user.id, extra={"email": user.email}),
         refresh_token=create_refresh_token(user.id),
@@ -75,15 +79,16 @@ async def login(body: LoginRequest, session: SessionDep) -> TokenResponse:
     _ensure_local()
     result = await session.execute(select(User).where(User.email == body.email.lower()))
     user = result.scalar_one_or_none()
-    # Constant-ish behavior: same error whether the email or password is wrong.
-    if (
-        user is None
-        or not user.hashed_password
-        or not verify_password(body.password, user.hashed_password)
-    ):
+    # Equalize timing on the user-missing path so response latency doesn't reveal whether
+    # an email is registered (anti-enumeration). Same error message in all failure cases.
+    if user is None or not user.hashed_password:
+        dummy_verify(body.password)
+        raise AuthError("Invalid email or password")
+    if not verify_password(body.password, user.hashed_password):
         raise AuthError("Invalid email or password")
     if not user.is_active:
         raise AuthError("Account is inactive")
+    await record_event("auth.login", actor=ActorType.user, actor_id=str(user.id))
     return TokenResponse(
         access_token=create_access_token(user.id, extra={"email": user.email}),
         refresh_token=create_refresh_token(user.id),
@@ -94,7 +99,11 @@ async def login(body: LoginRequest, session: SessionDep) -> TokenResponse:
 async def refresh(body: RefreshRequest, session: SessionDep) -> TokenResponse:
     _ensure_local()
     payload = decode_token(body.refresh_token, expected_type="refresh")
-    user = await session.get(User, payload["sub"])
+    try:
+        user_id = uuid.UUID(str(payload["sub"]))
+    except (ValueError, KeyError) as exc:
+        raise AuthError("Invalid token subject") from exc
+    user = await session.get(User, user_id)
     if user is None or not user.is_active:
         raise AuthError("User not found or inactive")
     return TokenResponse(
