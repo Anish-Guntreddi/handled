@@ -70,3 +70,27 @@ export type DocumentItem = {
   chunkCount: number;
   pageCount: number | null;
 };
+
+export type OpportunitySummary = {
+  id: string;
+  kind: string;
+  title: string;
+  sponsor: string | null;
+  deadline: string | null;
+  fitScore: number | null;
+  decisionHint: string | null;
+  sourceUrl: string | null;
+};
+
+export type FitRationale = { for: string[]; against: string[]; key_factors: string[] };
+
+export type OpportunityDetail = OpportunitySummary & {
+  externalId: string | null;
+  fitRationale: FitRationale | null;
+  details: Record<string, unknown> & {
+    research?: { agency_summary: string; prior_awards_summary: string; risk_level: string };
+    set_aside?: string | null;
+    naics?: string;
+  };
+  rawText: string | null;
+};

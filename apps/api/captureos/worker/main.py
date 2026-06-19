@@ -1,22 +1,32 @@
-"""Worker entrypoint.
+"""Worker entrypoint: polls the durable job queue and runs workflows (M2).
 
-M0: a stub that stays alive so the compose topology is complete. M2 replaces the loop
-body with durable queue consumption (claim step → run agent → record audit → advance run).
+Runs alongside the API (set WORKFLOW_INLINE_WORKER=false in production so the API stays
+fast and the worker handles execution). Safe to run many replicas — SKIP LOCKED dedupes.
 """
 
 from __future__ import annotations
 
 import anyio
 
+from captureos.config import get_settings
 from captureos.logging import configure_logging, get_logger
+from captureos.workflows.queue import drain_workflow_jobs, requeue_stale_jobs
 
 
 async def run() -> None:
     configure_logging()
     logger = get_logger("worker")
-    logger.info("worker.start", note="M0 stub — durable queue consumption arrives in M2")
-    while True:  # noqa: ASYNC110 - idle stub loop; replaced by queue consumption in M2
-        await anyio.sleep(5)  # pragma: no cover
+    settings = get_settings()
+    logger.info("worker.start", poll_interval=settings.worker_poll_interval_seconds)
+    while True:  # pragma: no cover - long-running loop
+        try:
+            await requeue_stale_jobs()
+            processed = await drain_workflow_jobs()
+        except Exception as exc:  # noqa: BLE001 - never let the loop die
+            logger.error("worker.loop_error", error=str(exc))
+            processed = 0
+        if processed == 0:
+            await anyio.sleep(settings.worker_poll_interval_seconds)
 
 
 def main() -> None:

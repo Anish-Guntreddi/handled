@@ -8,7 +8,7 @@ Seven phases map 1:1 to the PRD's delivery milestones M0–M6. The workflow engi
 
 - [x] **Phase 1: M0 Foundation** — Monorepo, full schema, auth, org multi-tenancy, provider abstractions, runnable end-to-end. ✅ (2026-06-19, gate passed)
 - [x] **Phase 2: M1 Company Brain + Ingestion** — Profile from minimal input; doc/website ingestion; evidence vault. ✅ (2026-06-19, gate passed)
-- [ ] **Phase 3: M2 GovCon Scanner + Workflow Engine** — Async engine; discover/research/score contracts.
+- [x] **Phase 3: M2 GovCon Scanner + Workflow Engine** — Async engine; discover/research/score contracts. ✅ (2026-06-19, gate passed)
 - [ ] **Phase 4: M3 Grant Scanner + Requirement Extraction** — Grants vertical; structured requirements w/ schema-retry.
 - [ ] **Phase 5: M4 Evidence Matching + Recommendation** — Map evidence, gaps, compliance matrix, human-approved recommendation.
 - [ ] **Phase 6: M5 Package Builder + Export** — Source-enforced package; MD/PDF/DOCX; package approval gate.
@@ -87,7 +87,7 @@ Seven phases map 1:1 to the PRD's delivery milestones M0–M6. The workflow engi
 |-------|----------------|--------|-----------|
 | 1. M0 Foundation | 1/1 | Complete | 2026-06-19 |
 | 2. M1 Company Brain + Ingestion | 1/1 | Complete | 2026-06-19 |
-| 3. M2 GovCon Scanner + Workflow Engine | 0/1 | Not started | - |
+| 3. M2 GovCon Scanner + Workflow Engine | 1/1 | Complete | 2026-06-19 |
 | 4. M3 Grant Scanner + Requirement Extraction | 0/1 | Not started | - |
 | 5. M4 Evidence Matching + Recommendation | 0/1 | Not started | - |
 | 6. M5 Package Builder + Export | 0/1 | Not started | - |

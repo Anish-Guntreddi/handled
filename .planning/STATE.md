@@ -9,12 +9,22 @@ See: .planning/PROJECT.md (updated 2026-06-19)
 
 ## Current Position
 
-Phase: 3 of 7 (M2 GovCon scanner + workflow engine) — STARTING
-Plan: 1 of 1 (Phases 1–2 complete)
-Status: Phases 1 (M0) + 2 (M1) COMPLETE — gates passed. Ready to execute Phase 3.
-Last activity: 2026-06-19 — M1 built, hardened (SSRF guard, upload cap), gated, committed.
+Phase: 4 of 7 (M3 Grant scanner + requirement extraction) — STARTING
+Plan: 1 of 1 (Phases 1–3 complete)
+Status: Phases 1–3 (M0/M1/M2) COMPLETE — gates passed. Ready to execute Phase 4.
+Last activity: 2026-06-19 — M2 built (durable queue+worker, GovCon scanner), gated, committed.
 
-Progress: [███░░░░░░░] ~29% (2 of 7 phases)
+Progress: [████░░░░░░] ~43% (3 of 7 phases)
+
+### Phase 3 (M2) — DONE ✅ (gate passed)
+Durable DB-backed job queue (workflow_jobs, FOR UPDATE SKIP LOCKED, commit-then-publish,
+reaper for stale jobs) replacing BackgroundTasks; worker loop (captureos/worker/main.py).
+Source adapters (sources/: SamGov, USAspending — pluggable, cached, rate-limited, mock
+offline). Agents: OpportunityResearch + FitScoring (FR-GC-1, explainable 0-100 mock scoring).
+gov_contract scan pipeline (discover→research→score); opportunity-scans + opportunities
+list/detail APIs; opportunities UI in the workspace. Token accounting rolled into runs.
+44 pytest + 3 live durable-worker HTTP checks; ruff+mypy+web-build clean.
+Migration bce9faaba33b (workflow_jobs).
 
 ### Phase 2 (M1) — DONE ✅ (gate passed)
 Agent base class (typed I/O, mock+gemini, schema-retry, agent_run+audit), sync workflow

@@ -10,6 +10,8 @@ import { useAuth } from "@/lib/auth";
 import type {
   CompanyProfile,
   DocumentItem,
+  OpportunityDetail,
+  OpportunitySummary,
   WorkflowRunCreated,
 } from "@/lib/types";
 
@@ -71,8 +73,142 @@ export default function OrgWorkspace() {
           queryClient.invalidateQueries({ queryKey: ["profile", orgId] });
         }}
       />
+
+      <OpportunitiesSection orgId={orgId} />
     </main>
   );
+}
+
+function OpportunitiesSection({ orgId }: { orgId: string }) {
+  const queryClient = useQueryClient();
+  const [expanded, setExpanded] = useState<string | null>(null);
+
+  const opportunitiesQuery = useQuery({
+    queryKey: ["opportunities", orgId],
+    queryFn: () => apiFetch<OpportunitySummary[]>(`/orgs/${orgId}/opportunities`),
+  });
+
+  const scan = useMutation({
+    mutationFn: async () => {
+      const { workflowRunId } = await apiFetch<WorkflowRunCreated>(
+        `/orgs/${orgId}/opportunity-scans`,
+        { method: "POST", body: { kind: "gov_contract", limit: 12 } },
+      );
+      const run = await pollWorkflowRun(orgId, workflowRunId, { maxAttempts: 60 });
+      if (run.status !== "succeeded") throw new ApiError(500, "scan_failed", run.error ?? "Scan failed");
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["opportunities", orgId] }),
+  });
+
+  const items = opportunitiesQuery.data ?? [];
+
+  return (
+    <section className="mt-10 rounded-2xl border border-neutral-200 bg-white p-6">
+      <div className="flex items-center justify-between">
+        <h2 className="text-sm font-medium uppercase tracking-wide text-neutral-500">
+          Government contract opportunities
+        </h2>
+        <button
+          onClick={() => scan.mutate()}
+          disabled={scan.isPending}
+          className="rounded-lg bg-neutral-900 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-700 disabled:opacity-50"
+        >
+          {scan.isPending ? "Scanning…" : "Run GovCon scan"}
+        </button>
+      </div>
+      {scan.isError && (
+        <p className="mt-2 text-sm text-red-600">
+          {scan.error instanceof ApiError ? scan.error.message : "Scan failed"}
+        </p>
+      )}
+
+      <ul className="mt-4 space-y-2">
+        {items.map((opp) => (
+          <li key={opp.id} className="rounded-xl border border-neutral-200">
+            <button
+              onClick={() => setExpanded(expanded === opp.id ? null : opp.id)}
+              className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left"
+            >
+              <div className="min-w-0">
+                <p className="truncate font-medium">{opp.title}</p>
+                <p className="truncate text-xs text-neutral-500">{opp.sponsor}</p>
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                <DecisionBadge hint={opp.decisionHint} />
+                <FitScore score={opp.fitScore} />
+              </div>
+            </button>
+            {expanded === opp.id && <OpportunityExpand orgId={orgId} opportunityId={opp.id} />}
+          </li>
+        ))}
+        {items.length === 0 && !scan.isPending && (
+          <li className="rounded-xl border border-dashed border-neutral-300 px-4 py-6 text-center text-sm text-neutral-500">
+            Build the Company Brain above, then run a scan to discover and rank contracts.
+          </li>
+        )}
+      </ul>
+    </section>
+  );
+}
+
+function OpportunityExpand({ orgId, opportunityId }: { orgId: string; opportunityId: string }) {
+  const detail = useQuery({
+    queryKey: ["opportunity", orgId, opportunityId],
+    queryFn: () => apiFetch<OpportunityDetail>(`/orgs/${orgId}/opportunities/${opportunityId}`),
+  });
+  if (detail.isLoading) return <p className="px-4 pb-3 text-sm text-neutral-500">Loading…</p>;
+  const d = detail.data;
+  if (!d) return null;
+  return (
+    <div className="space-y-3 border-t border-neutral-100 px-4 py-3 text-sm">
+      {d.details.research && (
+        <p className="text-neutral-700">{d.details.research.agency_summary}</p>
+      )}
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div>
+          <p className="text-xs font-medium uppercase text-emerald-700">Reasons to bid</p>
+          <ul className="mt-1 space-y-0.5">
+            {(d.fitRationale?.for ?? []).map((r, i) => (
+              <li key={i}>• {r}</li>
+            ))}
+          </ul>
+        </div>
+        <div>
+          <p className="text-xs font-medium uppercase text-red-700">Reasons against</p>
+          <ul className="mt-1 space-y-0.5">
+            {(d.fitRationale?.against ?? []).map((r, i) => (
+              <li key={i}>• {r}</li>
+            ))}
+            {(d.fitRationale?.against ?? []).length === 0 && <li className="text-neutral-400">None</li>}
+          </ul>
+        </div>
+      </div>
+      {(d.fitRationale?.key_factors ?? []).length > 0 && (
+        <div className="rounded-lg bg-amber-50 p-2 text-amber-800">
+          <span className="font-medium">Key factors: </span>
+          {(d.fitRationale?.key_factors ?? []).join("; ")}
+        </div>
+      )}
+      {d.sourceUrl && (
+        <a href={d.sourceUrl} target="_blank" rel="noreferrer" className="text-neutral-500 underline">
+          View source ({d.externalId})
+        </a>
+      )}
+    </div>
+  );
+}
+
+function FitScore({ score }: { score: number | null }) {
+  if (score === null) return <span className="text-xs text-neutral-400">—</span>;
+  const color = score >= 60 ? "bg-emerald-100 text-emerald-800" : score >= 40 ? "bg-amber-100 text-amber-800" : "bg-neutral-100 text-neutral-600";
+  return <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${color}`}>{Math.round(score)}</span>;
+}
+
+function DecisionBadge({ hint }: { hint: string | null }) {
+  if (!hint) return null;
+  const label = hint === "no_bid" ? "no-bid" : hint;
+  const color = hint === "bid" ? "text-emerald-700" : hint === "review" ? "text-amber-700" : "text-neutral-500";
+  return <span className={`text-xs font-medium ${color}`}>{label}</span>;
 }
 
 function CompanyBrainSection({

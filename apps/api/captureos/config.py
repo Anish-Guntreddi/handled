@@ -156,6 +156,14 @@ class Settings(BaseSettings):
     # ---- Cost guard ----
     workflow_token_budget: int = 200_000
 
+    # ---- Workflow queue / worker ----
+    # When true (default), the API drains the durable job queue in-process via a background
+    # task, so workflows run with no separate worker. Set false in production and run the
+    # dedicated worker (`python -m captureos.worker.main`) for scale + isolation.
+    workflow_inline_worker: bool = True
+    worker_poll_interval_seconds: float = 2.0
+    worker_max_attempts: int = 3
+
     @field_validator("cors_allow_origins")
     @classmethod
     def _strip_origins(cls, v: str) -> str:

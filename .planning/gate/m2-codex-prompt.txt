@@ -1,0 +1,17 @@
+Independent review of CaptureOS Phase M2 (GovCon scanner + durable workflow queue). Spec:
+captureos-engineering-prd.md (FR-OD-1..5, FR-GC-1..4, FR-AU-1/2, NFR-7/8, CON-5). Review the
+NEW code since the M1 gate: captureos/models/jobs.py, captureos/workflows/{queue,runner,
+dispatch,engine}.py, captureos/worker/main.py, captureos/sources/* (sam_gov, usaspending,
+cache, registry), captureos/agents/opportunity.py, captureos/services/scan.py,
+captureos/api/opportunities.py, and the migration bce9faaba33b.
+
+Find REAL defects only (file:line, severity, fix). Prioritize:
+1. Queue correctness: FOR UPDATE SKIP LOCKED claim, commit-then-publish atomicity, the
+   reaper (re-queue stale 'processing'), double-drain safety (inline drain + worker),
+   any lost/duplicated job or run.
+2. CON-5: org isolation on opportunity-scans/opportunities list+detail and the agent_runs.
+3. Injection/SSRF in source adapters (sam_gov/usaspending real HTTP paths) and scan params.
+4. Partial-results handling when an adapter fails; never a silent empty/crash.
+5. Token accounting rollup correctness; fit-score bounds (0-100) and decision mapping.
+6. Any swallowed exception hiding a real failure.
+End with a clear VERDICT and a must-fix list.

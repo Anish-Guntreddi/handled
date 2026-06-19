@@ -21,7 +21,7 @@ from captureos.models.evidence import EvidenceItem, Source
 from captureos.models.workflow import WorkflowRun
 from captureos.schemas.company import BuildProfileRequest, CompanyProfileResponse, ProfilePatch
 from captureos.schemas.workflow import WorkflowRunCreated
-from captureos.workflows.dispatch import schedule_workflow
+from captureos.workflows.dispatch import dispatch_run
 
 router = APIRouter(prefix="/orgs/{org_id}/company-profile", tags=["company-brain"])
 
@@ -66,11 +66,8 @@ async def build_profile(
         input_params=body.model_dump(mode="json"),
     )
     session.add(run)
-    # Commit-then-dispatch: the worker reads the run in its own session, so it must be
-    # durably committed before we hand it off (FastAPI keeps the request session open
-    # through background tasks). This is also exactly what M2's real queue requires.
-    await session.commit()
-    schedule_workflow(background_tasks, run.id)
+    await session.flush()
+    await dispatch_run(session, background_tasks, run)
     await record_event(
         "company_brain.build_requested",
         org_id=ctx.org_id,
