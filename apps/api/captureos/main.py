@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from captureos import __version__
@@ -47,8 +47,9 @@ def create_app() -> FastAPI:
         title="CaptureOS API",
         version=__version__,
         lifespan=lifespan,
-        docs_url="/docs",
-        redoc_url="/redoc",
+        # Swagger/ReDoc are disabled in production to avoid exposing the API surface.
+        docs_url=None if settings.is_production_like else "/docs",
+        redoc_url=None if settings.is_production_like else "/redoc",
     )
     app.add_middleware(
         CORSMiddleware,
@@ -57,6 +58,18 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    @app.middleware("http")
+    async def _security_headers(request: Request, call_next):  # type: ignore[no-untyped-def]
+        response = await call_next(request)
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("X-Frame-Options", "DENY")
+        response.headers.setdefault("Referrer-Policy", "no-referrer")
+        if settings.is_production_like:
+            response.headers.setdefault(
+                "Strict-Transport-Security", "max-age=63072000; includeSubDomains"
+            )
+        return response
+
     register_exception_handlers(app)
     app.include_router(api_router, prefix="/api/v1")
 

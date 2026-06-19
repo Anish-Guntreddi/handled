@@ -9,12 +9,18 @@ See: .planning/PROJECT.md (updated 2026-06-19)
 
 ## Current Position
 
-Phase: 1 of 7 (M0 Foundation)
-Plan: 1 of 1 in current phase
-Status: Build complete & verified — phase GATE pending (codex + /security-audit + /security-review + /qa)
-Last activity: 2026-06-19 — M0 backend + frontend built and verified green.
+Phase: 2 of 7 (M1 Company Brain + ingestion) — STARTING
+Plan: 1 of 1 (Phase 1 complete)
+Status: Phase 1 (M0) COMPLETE — gate passed. Ready to plan/execute Phase 2.
+Last activity: 2026-06-19 — M0 built, hardened, gated (codex + security + qa), committed.
 
-Progress: [█░░░░░░░░░] ~13%
+Progress: [██░░░░░░░░] ~14% (1 of 7 phases)
+
+### Phase 1 (M0) — DONE ✅ (gate passed)
+Gate: codex independent review (clean) · security-audit (4 fixes: login timing oracle,
+nullable audit org_id for auth events, security headers, prod docs gating, refresh UUID) ·
+security-review (manual on diff — clean; skill needs a git remote) · qa (10/10 live HTTP
+checks + 20 pytest + clean web build). Gate evidence in .planning/gate/.
 
 ### M0 verification results (all green)
 - Backend: 23 tables migrated; `alembic upgrade head` clean; 17/17 pytest pass; ruff clean; mypy clean (51 files); app boots, `/api/v1/readyz` pings DB OK.

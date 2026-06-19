@@ -10,22 +10,29 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, Index, Integer, String, func
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
-from captureos.db.base import Base, OrgScopedMixin, UUIDPKMixin
+from captureos.db.base import Base, UUIDPKMixin
 from captureos.models.enums import ActorType
 
 
-class AuditEvent(UUIDPKMixin, OrgScopedMixin, Base):
+class AuditEvent(UUIDPKMixin, Base):
     __tablename__ = "audit_events"
     __table_args__ = (
         Index("ix_audit_events_org_occurred", "org_id", "occurred_at"),
         Index("ix_audit_events_run", "run_id"),
     )
 
+    # Nullable: system/auth events (login, register) have no org context (CON-3, FR-AU-2).
+    org_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
     filing_id: Mapped[uuid.UUID | None] = mapped_column(PGUUID(as_uuid=True), nullable=True)
     run_id: Mapped[uuid.UUID | None] = mapped_column(PGUUID(as_uuid=True), nullable=True)
     step_id: Mapped[uuid.UUID | None] = mapped_column(PGUUID(as_uuid=True), nullable=True)
