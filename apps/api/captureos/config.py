@@ -189,6 +189,13 @@ class Settings(BaseSettings):
                 raise ValueError("FIREBASE_PROJECT_ID required when AUTH_PROVIDER=firebase")
             if self.llm_provider is LLMProviderName.gemini and not self.gemini_api_key:
                 raise ValueError("GEMINI_API_KEY required when LLM_PROVIDER=gemini")
+            # Fail closed: mock billing has no payment verification, so it must never run in a
+            # deployed env, and a real Stripe webhook must be signature-verifiable (CON-4).
+            if self.billing_provider is BillingProviderName.mock:
+                raise ValueError("BILLING_PROVIDER=mock is unsafe in production; configure Stripe")
+            stripe_billing = self.billing_provider is BillingProviderName.stripe
+            if stripe_billing and not self.stripe_webhook_secret:
+                raise ValueError("STRIPE_WEBHOOK_SECRET required when BILLING_PROVIDER=stripe")
         return self
 
 

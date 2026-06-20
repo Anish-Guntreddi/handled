@@ -34,8 +34,13 @@ real PDF export, 420 min time-saved across 6 runs.
   evidence_item; the package Audit/Citation step blocks `status=ready` if any document is unsourced.
 - **CON-3 (everything audited):** every workflow run / agent call / data + external action writes an
   append-only audit_event; surfaced in the dashboard + CSV/JSON export.
-- **CON-4 (secrets server-side):** secrets via the secrets/billing providers; Stripe webhook is
-  signature-verified; no secret is serialized to a client.
+- **CON-4 (secrets server-side):** secrets via the secrets/billing providers; no secret is
+  serialized to a client. Billing fails *closed*: the unauthenticated webhook route is mounted
+  ONLY for Stripe (signature-verified); under mock billing it does not exist, and a mock upgrade
+  goes through the authenticated, org-scoped checkout (which can only upgrade the caller's own
+  org). `BILLING_PROVIDER=mock` (or Stripe without a webhook secret) raises at startup in
+  production. [Hardened after an automated security review flagged the original open mock webhook
+  as a CRITICAL unauthenticated privilege-escalation vector — now closed + regression-tested.]
 - **CON-5 (strict org isolation):** every tenant query is org-scoped; non-members get 404 (no
   existence leak); isolation is asserted by tests in every phase.
 
@@ -57,7 +62,6 @@ providers today; swaps to GCP + Gemini + Stripe via env, no code change.
 ## Known follow-ups (non-blocking)
 
 - Audit export streams the full event set (no pagination) — fine now, paginate at scale.
-- Mock billing webhook is intentionally unauthenticated (local/dev only); production uses Stripe
-  signature verification. Do not deploy with BILLING_PROVIDER=mock.
 - Gemini/real-provider paths are implemented but exercised only via mocks offline; wire real keys to
-  validate the live LLM/embeddings/docparse/storage/billing paths in a staging environment.
+  validate the live LLM/embeddings/docparse/storage/billing paths in a staging environment. (The
+  Stripe webhook signature path is `# pragma: no cover` — validate it against Stripe's test mode.)

@@ -25,6 +25,7 @@ from captureos.services.billing import (
     PREMIUM_FEATURES,
     PRODUCT_PRICES,
     apply_webhook,
+    complete_mock_purchase,
     entitlements_for,
     start_checkout,
 )
@@ -48,7 +49,9 @@ async def get_status(ctx: OrgViewer, session: SessionDep) -> BillingStatus:
 
 
 @router.post("/checkout", response_model=CheckoutResponse)
-async def checkout(body: CheckoutRequest, ctx: OrgOwner, request: Request) -> CheckoutResponse:
+async def checkout(
+    body: CheckoutRequest, ctx: OrgOwner, session: SessionDep, request: Request
+) -> CheckoutResponse:
     success_url = f"{str(request.base_url).rstrip('/')}/orgs/{ctx.org_id}/billing?success=1"
     cs = start_checkout(ctx.org_id, body.product, success_url=success_url)
     await record_event(
@@ -58,8 +61,17 @@ async def checkout(body: CheckoutRequest, ctx: OrgOwner, request: Request) -> Ch
         actor_id=str(ctx.user.id),
         payload={"product": body.product, "session_id": cs.session_id},
     )
+    # Mock has no async provider callback, so the owner's own authenticated checkout fulfills the
+    # upgrade inline (org-scoped → no cross-tenant escalation). Stripe fulfills via the webhook.
+    completed = False
+    if get_billing().name == "mock":
+        completed = await complete_mock_purchase(session, ctx.org_id, cs)
     return CheckoutResponse(
-        session_id=cs.session_id, url=cs.url, product=cs.product, amount_cents=cs.amount_cents
+        session_id=cs.session_id,
+        url=cs.url,
+        product=cs.product,
+        amount_cents=cs.amount_cents,
+        completed=completed,
     )
 
 

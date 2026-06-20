@@ -63,6 +63,21 @@ def start_checkout(org_id: uuid.UUID, product: str, *, success_url: str) -> Chec
     )
 
 
+async def complete_mock_purchase(
+    session: AsyncSession, org_id: uuid.UUID, checkout: CheckoutSession
+) -> bool:
+    """Fulfill a mock checkout inline. The org_id comes from the authenticated request context
+    (never client input), so this can only ever upgrade the caller's own org — no escalation."""
+    event = {
+        "type": "checkout.completed",
+        "org_id": str(org_id),
+        "product": checkout.product,
+        "amount_cents": checkout.amount_cents,
+        "external_id": checkout.session_id,
+    }
+    return await apply_webhook(session, event)
+
+
 async def apply_webhook(session: AsyncSession, event: dict) -> bool:
     """Fulfill a verified payment event: record revenue (idempotently), activate the
     subscription, and upgrade the org's plan. Returns True when it changed state."""

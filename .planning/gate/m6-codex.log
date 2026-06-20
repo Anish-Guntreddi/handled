@@ -2750,3 +2750,654 @@ exec
      4	
      5	__all__ = ["record_event"]
 
+codex
+I’m sanity-checking one Stripe-specific assumption before I lock the review: whether `checkout.session.completed` alone is enough to grant entitlements, or whether this code is promoting access before payment is actually settled.
+web search: 
+web search: site:docs.stripe.com checkout.session.completed payment_status subscription checkout session completed paid
+web search: 
+web search: Stripe checkout.session.completed payment_status docs
+web search: 
+web search: Stripe event checkout.session.completed event docs stripe
+web search: 
+web search: https://docs.stripe.com/api/events/types
+web search: 
+web search: https://docs.stripe.com/api/checkout/sessions/object
+web search: 
+web search: 'payment_status' in https://docs.stripe.com/api/checkout/sessions/object
+web search: 
+web search: Stripe checkout.session.completed payment_status fulfill order docs stripe.com
+exec
+/bin/zsh -lc "rg -n \"status=|record_event\\(.*status|WorkflowRun\\(.*status|AuditEvent\\(\" apps/api/captureos | head -n 200" in /Users/anishguntreddi/Documents/hackathon
+ succeeded in 0ms:
+apps/api/captureos/services/evidence.py:167:                status=status,
+apps/api/captureos/services/packaging.py:6:citation resolves to a real evidence_item/source, so unsourced claims can't reach status=ready."""
+apps/api/captureos/services/packaging.py:181:                status=GeneratedDocStatus.draft.value,
+apps/api/captureos/services/filings.py:43:        status=FilingStatus.draft.value,
+apps/api/captureos/workflows/engine.py:75:            status=StepStatus.pending.value,
+apps/api/captureos/workflows/engine.py:110:                "workflow.needs_input", org_id=run.org_id, run_id=run.id, status="needs_input"
+apps/api/captureos/workflows/engine.py:124:                status="failed",
+apps/api/captureos/workflows/engine.py:154:        status="succeeded",
+apps/api/captureos/services/gaps.py:119:            status=MatchStatus.user_provided.value,
+apps/api/captureos/services/gaps.py:124:    ctx.merge_results(resolved=True, requirementId=str(requirement_id), status="user_provided")
+apps/api/captureos/models/audit.py:22:class AuditEvent(UUIDPKMixin, Base):
+apps/api/captureos/workflows/queue.py:24:    session.add(WorkflowJob(run_id=run_id, org_id=org_id, status="pending"))
+apps/api/captureos/workflows/queue.py:68:            .values(status="pending", locked_at=None)
+apps/api/captureos/workflows/queue.py:87:        # Claim is committed (status=processing); execute outside that short txn.
+apps/api/captureos/agents/base.py:147:                    status=status.value,
+apps/api/captureos/agents/base.py:165:            status=status.value,
+apps/api/captureos/api/workflows.py:39:        status=run.status,
+apps/api/captureos/api/workflows.py:40:        steps=[WorkflowStepResponse(name=s.name, status=s.status) for s in steps],
+apps/api/captureos/api/health.py:19:    return Health(status="ok", version=__version__, environment=settings.captureos_env.value)
+apps/api/captureos/api/health.py:27:    return Health(status="ready", version=__version__, environment=settings.captureos_env.value)
+apps/api/captureos/api/filings.py:101:        status=doc.status,
+apps/api/captureos/api/filings.py:113:        status=filing.status,
+apps/api/captureos/api/filings.py:142:        status="queued",
+apps/api/captureos/api/filings.py:301:        status=filing.status,
+apps/api/captureos/api/filings.py:321:        raise ValidationFailed("Package must be approved (status=ready) before export")
+apps/api/captureos/api/filings.py:412:        status=filing.status,
+apps/api/captureos/api/company_profile.py:65:        status="queued",
+apps/api/captureos/providers/audit.py:59:                session.add(AuditEvent(**data))
+apps/api/captureos/api/documents.py:53:        parse_status=doc.parse_status,
+apps/api/captureos/api/documents.py:88:        parse_status=ParseStatus.pending.value,
+apps/api/captureos/api/documents.py:162:        status="queued",
+apps/api/captureos/api/documents.py:184:        parse_status=ParseStatus.pending.value,
+apps/api/captureos/api/documents.py:191:        status="queued",
+apps/api/captureos/api/billing.py:43:        subscription_status=sub.status if sub else None,
+apps/api/captureos/api/opportunities.py:39:        status="queued",
+apps/api/captureos/agents/matching.py:110:                status="missing", score=0.0, rationale="Requirement has no scoreable terms."
+apps/api/captureos/agents/matching.py:138:            status=status, score=round(best_score, 3), best_ref=best_ref, rationale=rationale
+apps/api/captureos/agents/company_brain.py:182:                certs.append(CertItem(name=label, status="detected"))
+apps/api/captureos/agents/company_brain.py:185:                certs.append(CertItem(name=likely, status="unknown"))
+
+exec
+/bin/zsh -lc 'nl -ba apps/api/captureos/workflows/engine.py' in /Users/anishguntreddi/Documents/hackathon
+ succeeded in 0ms:
+     1	"""Pipeline executor. Runs an ordered list of named steps for a workflow_run, recording
+     2	each step's status, the agent runs inside it, and audit events (CON-3, NFR-8).
+     3	
+     4	Failures are always visible: a failed step marks the run ``failed`` (or ``needs_input``
+     5	when a step raises ``NeedsInput``) with the error recorded — never a silent empty result.
+     6	"""
+     7	
+     8	from __future__ import annotations
+     9	
+    10	from collections.abc import Awaitable, Callable
+    11	from dataclasses import dataclass
+    12	
+    13	from sqlalchemy import func, select
+    14	from sqlalchemy.ext.asyncio import AsyncSession
+    15	
+    16	from captureos.agents.base import AgentContext
+    17	from captureos.audit import record_event
+    18	from captureos.logging import get_logger
+    19	from captureos.models.enums import StepStatus, WorkflowStatus
+    20	from captureos.models.workflow import AgentRun, WorkflowRun, WorkflowStep
+    21	
+    22	logger = get_logger(__name__)
+    23	
+    24	
+    25	class NeedsInput(Exception):
+    26	    """A step raises this to pause the run pending user input (e.g. a missing document)."""
+    27	
+    28	
+    29	@dataclass(slots=True)
+    30	class StepContext:
+    31	    session: AsyncSession
+    32	    run: WorkflowRun
+    33	    step: WorkflowStep
+    34	
+    35	    @property
+    36	    def org_id(self):
+    37	        return self.run.org_id
+    38	
+    39	    @property
+    40	    def params(self) -> dict:
+    41	        return self.run.input_params or {}
+    42	
+    43	    def merge_results(self, **values) -> None:
+    44	        """Accumulate partial results so the client can poll them as steps complete."""
+    45	        current = dict(self.run.partial_results or {})
+    46	        current.update(values)
+    47	        self.run.partial_results = current
+    48	
+    49	    def agent_context(self) -> AgentContext:
+    50	        return AgentContext(
+    51	            session=self.session,
+    52	            org_id=self.run.org_id,
+    53	            run_id=self.run.id,
+    54	            step_id=self.step.id,
+    55	            filing_id=self.run.filing_id,
+    56	        )
+    57	
+    58	
+    59	StepFn = Callable[[StepContext], Awaitable[None]]
+    60	
+    61	
+    62	async def _get_or_create_step(
+    63	    session: AsyncSession, run: WorkflowRun, name: str, ordinal: int
+    64	) -> WorkflowStep:
+    65	    existing = await session.execute(
+    66	        select(WorkflowStep).where(WorkflowStep.run_id == run.id, WorkflowStep.name == name)
+    67	    )
+    68	    step = existing.scalar_one_or_none()
+    69	    if step is None:
+    70	        step = WorkflowStep(
+    71	            org_id=run.org_id,
+    72	            run_id=run.id,
+    73	            name=name,
+    74	            ordinal=ordinal,
+    75	            status=StepStatus.pending.value,
+    76	        )
+    77	        session.add(step)
+    78	        await session.flush()
+    79	    return step
+    80	
+    81	
+    82	async def run_pipeline(
+    83	    session: AsyncSession,
+    84	    run: WorkflowRun,
+    85	    steps: list[tuple[str, StepFn]],
+    86	    *,
+    87	    time_saved_minutes: int | None = None,
+    88	) -> None:
+    89	    run.status = WorkflowStatus.running.value
+    90	    await session.flush()
+    91	    await record_event(
+    92	        "workflow.started", org_id=run.org_id, run_id=run.id, payload={"type": run.type}
+    93	    )
+    94	
+    95	    for ordinal, (name, fn) in enumerate(steps):
+    96	        step = await _get_or_create_step(session, run, name, ordinal)
+    97	        if step.status == StepStatus.done.value:
+    98	            continue  # idempotent: already completed (re-delivery / resume)
+    99	
+   100	        step.status = StepStatus.running.value
+   101	        await session.flush()
+   102	        try:
+   103	            await fn(StepContext(session=session, run=run, step=step))
+   104	        except NeedsInput as ni:
+   105	            step.status = StepStatus.skipped.value
+   106	            run.status = WorkflowStatus.needs_input.value
+   107	            run.error = str(ni)
+   108	            await session.flush()
+   109	            await record_event(
+   110	                "workflow.needs_input", org_id=run.org_id, run_id=run.id, status="needs_input"
+   111	            )
+   112	            return
+   113	        except Exception as exc:  # noqa: BLE001 - failure must be captured, not propagated
+   114	            step.status = StepStatus.failed.value
+   115	            step.error = str(exc)
+   116	            run.status = WorkflowStatus.failed.value
+   117	            run.error = str(exc)
+   118	            await session.flush()
+   119	            await record_event(
+   120	                "workflow.failed",
+   121	                org_id=run.org_id,
+   122	                run_id=run.id,
+   123	                step_id=step.id,
+   124	                status="failed",
+   125	                payload={"error": str(exc), "step": name},
+   126	            )
+   127	            logger.error("workflow.step_failed", run_id=str(run.id), step=name, error=str(exc))
+   128	            return
+   129	
+   130	        step.status = StepStatus.done.value
+   131	        await session.flush()
+   132	
+   133	    # Roll up token usage from this run's agent invocations (cost visibility, NFR-6/FR-AU-1).
+   134	    totals = (
+   135	        await session.execute(
+   136	            select(
+   137	                func.coalesce(func.sum(AgentRun.input_tokens), 0),
+   138	                func.coalesce(func.sum(AgentRun.output_tokens), 0),
+   139	            )
+   140	            .join(WorkflowStep, WorkflowStep.id == AgentRun.step_id)
+   141	            .where(WorkflowStep.run_id == run.id)
+   142	        )
+   143	    ).one()
+   144	    run.total_input_tokens, run.total_output_tokens = int(totals[0]), int(totals[1])
+   145	
+   146	    run.status = WorkflowStatus.succeeded.value
+   147	    if time_saved_minutes is not None:
+   148	        run.time_saved_minutes = time_saved_minutes
+   149	    await session.flush()
+   150	    await record_event(
+   151	        "workflow.succeeded",
+   152	        org_id=run.org_id,
+   153	        run_id=run.id,
+   154	        status="succeeded",
+   155	        input_tokens=run.total_input_tokens,
+   156	        output_tokens=run.total_output_tokens,
+   157	    )
+
+codex
+One more correctness check surfaced in checkout itself, independent of the security questions: the post-checkout redirect URL may be pointing at the wrong host/path. I’m verifying the app’s router mount before I decide whether that belongs in the final findings.
+exec
+/bin/zsh -lc 'nl -ba apps/api/captureos/main.py' in /Users/anishguntreddi/Documents/hackathon
+ succeeded in 0ms:
+     1	"""FastAPI application factory."""
+     2	
+     3	from __future__ import annotations
+     4	
+     5	from collections.abc import AsyncIterator
+     6	from contextlib import asynccontextmanager
+     7	
+     8	from fastapi import FastAPI, Request
+     9	from fastapi.middleware.cors import CORSMiddleware
+    10	
+    11	from captureos import __version__
+    12	from captureos.api.router import api_router
+    13	from captureos.config import get_settings
+    14	from captureos.core.errors import register_exception_handlers
+    15	from captureos.logging import configure_logging, get_logger
+    16	
+    17	logger = get_logger(__name__)
+    18	
+    19	
+    20	@asynccontextmanager
+    21	async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    22	    configure_logging()
+    23	    settings = get_settings()
+    24	    logger.info(
+    25	        "startup",
+    26	        env=settings.captureos_env.value,
+    27	        llm=settings.llm_provider.value,
+    28	        storage=settings.storage_provider.value,
+    29	        auth=settings.auth_provider.value,
+    30	    )
+    31	    if settings.run_migrations_on_start:
+    32	        import anyio
+    33	
+    34	        from captureos.db.migrate import apply_migrations
+    35	
+    36	        logger.info("migrations.apply")
+    37	        await anyio.to_thread.run_sync(apply_migrations)
+    38	    yield
+    39	    from captureos.db.session import get_engine
+    40	
+    41	    await get_engine().dispose()
+    42	
+    43	
+    44	def create_app() -> FastAPI:
+    45	    settings = get_settings()
+    46	    app = FastAPI(
+    47	        title="CaptureOS API",
+    48	        version=__version__,
+    49	        lifespan=lifespan,
+    50	        # Swagger/ReDoc are disabled in production to avoid exposing the API surface.
+    51	        docs_url=None if settings.is_production_like else "/docs",
+    52	        redoc_url=None if settings.is_production_like else "/redoc",
+    53	    )
+    54	    app.add_middleware(
+    55	        CORSMiddleware,
+    56	        allow_origins=settings.cors_origins_list,
+    57	        allow_credentials=True,
+    58	        allow_methods=["*"],
+    59	        allow_headers=["*"],
+    60	    )
+    61	
+    62	    @app.middleware("http")
+    63	    async def _security_headers(request: Request, call_next):  # type: ignore[no-untyped-def]
+    64	        response = await call_next(request)
+    65	        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    66	        response.headers.setdefault("X-Frame-Options", "DENY")
+    67	        response.headers.setdefault("Referrer-Policy", "no-referrer")
+    68	        if settings.is_production_like:
+    69	            response.headers.setdefault(
+    70	                "Strict-Transport-Security", "max-age=63072000; includeSubDomains"
+    71	            )
+    72	        return response
+    73	
+    74	    register_exception_handlers(app)
+    75	    app.include_router(api_router, prefix="/api/v1")
+    76	
+    77	    @app.get("/health", tags=["health"])
+    78	    async def root_health() -> dict:
+    79	        return {"status": "ok", "version": __version__}
+    80	
+    81	    return app
+    82	
+    83	
+    84	app = create_app()
+
+exec
+/bin/zsh -lc "rg -n \"include_router\\(api_router|/api/v1|FastAPI\\(\" apps/api/captureos -g '*.py'" in /Users/anishguntreddi/Documents/hackathon
+ succeeded in 0ms:
+apps/api/captureos/main.py:46:    app = FastAPI(
+apps/api/captureos/main.py:75:    app.include_router(api_router, prefix="/api/v1")
+apps/api/captureos/api/router.py:1:"""Aggregates all v1 routers under /api/v1."""
+apps/api/captureos/api/documents.py:96:        upload_url = f"/api/v1/orgs/{ctx.org_id}/blobs/{rel_key}"
+apps/api/captureos/providers/storage.py:55:            url=f"/api/v1/blobs/{key}",
+apps/api/captureos/providers/storage.py:62:        return f"/api/v1/blobs/{_key_from_uri(uri)}"
+
+exec
+/bin/zsh -lc 'rg -n "success_url|base_url" apps/api/tests apps/api/captureos' in /Users/anishguntreddi/Documents/hackathon
+ succeeded in 0ms:
+apps/api/captureos/services/billing.py:53:def start_checkout(org_id: uuid.UUID, product: str, *, success_url: str) -> CheckoutSession:
+apps/api/captureos/services/billing.py:62:        success_url=success_url,
+apps/api/captureos/api/billing.py:52:    success_url = f"{str(request.base_url).rstrip('/')}/orgs/{ctx.org_id}/billing?success=1"
+apps/api/captureos/api/billing.py:53:    cs = start_checkout(ctx.org_id, body.product, success_url=success_url)
+apps/api/captureos/sources/usaspending.py:55:            "usaspending.gov" not in settings.usaspending_base_url
+apps/api/captureos/sources/usaspending.py:80:                    f"{settings.usaspending_base_url}/search/spending_by_award/", json=body
+apps/api/captureos/sources/grants_gov.py:110:                resp = await client.post(f"{settings.grants_gov_base_url}/search2", json=body)
+apps/api/captureos/db/migrate.py:18:    cfg.set_main_option("sqlalchemy.url", get_settings().database_url_sync)
+apps/api/captureos/db/session.py:27:        settings.database_url,
+apps/api/tests/conftest.py:12:def _configured_database_url() -> str:
+apps/api/tests/conftest.py:28:_url = make_url(_configured_database_url())
+apps/api/tests/conftest.py:116:    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+apps/api/captureos/config.py:99:    database_url: str = "postgresql+asyncpg://captureos:captureos@localhost:5432/captureos"
+apps/api/captureos/config.py:100:    database_url_sync: str = "postgresql+psycopg://captureos:captureos@localhost:5432/captureos"
+apps/api/captureos/config.py:151:    grants_gov_base_url: str = "https://api.grants.gov/v1/api"
+apps/api/captureos/config.py:152:    usaspending_base_url: str = "https://api.usaspending.gov/api/v2"
+apps/api/captureos/providers/base.py:152:        self, *, org_id: str, product: str, amount_cents: int, success_url: str
+apps/api/captureos/providers/billing.py:22:        self, *, org_id: str, product: str, amount_cents: int, success_url: str
+apps/api/captureos/providers/billing.py:71:        self, *, org_id: str, product: str, amount_cents: int, success_url: str
+apps/api/captureos/providers/billing.py:77:            success_url=success_url,
+
+exec
+/bin/zsh -lc 'nl -ba apps/api/captureos/core/errors.py' in /Users/anishguntreddi/Documents/hackathon
+ succeeded in 0ms:
+     1	"""Uniform error contract (PRD §9.9): every error → {error: {code, message, details?}}."""
+     2	
+     3	from __future__ import annotations
+     4	
+     5	from typing import Any
+     6	
+     7	from fastapi import FastAPI, Request, status
+     8	from fastapi.exceptions import RequestValidationError
+     9	from fastapi.responses import JSONResponse
+    10	
+    11	from captureos.logging import get_logger
+    12	
+    13	logger = get_logger(__name__)
+    14	
+    15	
+    16	class AppError(Exception):
+    17	    code = "error"
+    18	    status_code = status.HTTP_400_BAD_REQUEST
+    19	
+    20	    def __init__(
+    21	        self,
+    22	        message: str,
+    23	        *,
+    24	        code: str | None = None,
+    25	        status_code: int | None = None,
+    26	        details: Any = None,
+    27	    ) -> None:
+    28	        super().__init__(message)
+    29	        self.message = message
+    30	        if code:
+    31	            self.code = code
+    32	        if status_code:
+    33	            self.status_code = status_code
+    34	        self.details = details
+    35	
+    36	
+    37	class NotFoundError(AppError):
+    38	    code = "not_found"
+    39	    status_code = status.HTTP_404_NOT_FOUND
+    40	
+    41	
+    42	class AuthError(AppError):
+    43	    code = "unauthorized"
+    44	    status_code = status.HTTP_401_UNAUTHORIZED
+    45	
+    46	
+    47	class ForbiddenError(AppError):
+    48	    code = "forbidden"
+    49	    status_code = status.HTTP_403_FORBIDDEN
+    50	
+    51	
+    52	class ConflictError(AppError):
+    53	    code = "conflict"
+    54	    status_code = status.HTTP_409_CONFLICT
+    55	
+    56	
+    57	class PaymentRequiredError(AppError):
+    58	    code = "payment_required"
+    59	    status_code = status.HTTP_402_PAYMENT_REQUIRED
+    60	
+    61	
+    62	class ValidationFailed(AppError):
+    63	    code = "validation_error"
+    64	    status_code = status.HTTP_422_UNPROCESSABLE_ENTITY
+    65	
+    66	
+    67	def _body(code: str, message: str, details: Any = None) -> dict:
+    68	    err: dict[str, Any] = {"code": code, "message": message}
+    69	    if details is not None:
+    70	        err["details"] = details
+    71	    return {"error": err}
+    72	
+    73	
+    74	def register_exception_handlers(app: FastAPI) -> None:
+    75	    @app.exception_handler(AppError)
+    76	    async def _app_error(_: Request, exc: AppError) -> JSONResponse:
+    77	        return JSONResponse(
+    78	            status_code=exc.status_code, content=_body(exc.code, exc.message, exc.details)
+    79	        )
+    80	
+    81	    @app.exception_handler(RequestValidationError)
+    82	    async def _validation_error(_: Request, exc: RequestValidationError) -> JSONResponse:
+    83	        return JSONResponse(
+    84	            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+    85	            content=_body("validation_error", "Request validation failed", exc.errors()),
+    86	        )
+    87	
+    88	    @app.exception_handler(Exception)
+    89	    async def _unhandled(_: Request, exc: Exception) -> JSONResponse:
+    90	        logger.error("unhandled_exception", error=str(exc), type=type(exc).__name__)
+    91	        return JSONResponse(
+    92	            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+    93	            content=_body("internal_error", "An unexpected error occurred"),
+    94	        )
+
+exec
+/bin/zsh -lc 'nl -ba apps/api/captureos/providers/audit.py' in /Users/anishguntreddi/Documents/hackathon
+ succeeded in 0ms:
+     1	"""Audit sinks (CON-3, FR-AU-2/5).
+     2	
+     3	PostgresAuditSink writes append-only rows in its own transaction so audit durability is
+     4	decoupled from the business transaction. BigQueryAuditSink is the production stream.
+     5	"""
+     6	
+     7	from __future__ import annotations
+     8	
+     9	import uuid
+    10	
+    11	from captureos.config import Settings
+    12	from captureos.logging import get_logger
+    13	from captureos.providers.base import AuditSink
+    14	
+    15	logger = get_logger(__name__)
+    16	
+    17	_UUID_FIELDS = ("org_id", "filing_id", "run_id", "step_id")
+    18	_ALLOWED = {
+    19	    "org_id",
+    20	    "filing_id",
+    21	    "run_id",
+    22	    "step_id",
+    23	    "actor",
+    24	    "actor_id",
+    25	    "action",
+    26	    "source_url",
+    27	    "model",
+    28	    "input_tokens",
+    29	    "output_tokens",
+    30	    "latency_ms",
+    31	    "status",
+    32	    "payload",
+    33	}
+    34	
+    35	
+    36	def _coerce(event: dict) -> dict:
+    37	    out: dict = {k: v for k, v in event.items() if k in _ALLOWED}
+    38	    for field in _UUID_FIELDS:
+    39	        val = out.get(field)
+    40	        if isinstance(val, str):
+    41	            out[field] = uuid.UUID(val)
+    42	    out.setdefault("payload", {})
+    43	    return out
+    44	
+    45	
+    46	class PostgresAuditSink(AuditSink):
+    47	    name = "postgres"
+    48	
+    49	    def __init__(self, settings: Settings) -> None:
+    50	        self._settings = settings
+    51	
+    52	    async def emit(self, event: dict) -> None:
+    53	        from captureos.db.session import session_scope
+    54	        from captureos.models.audit import AuditEvent
+    55	
+    56	        data = _coerce(event)
+    57	        try:
+    58	            async with session_scope() as session:
+    59	                session.add(AuditEvent(**data))
+    60	        except Exception as exc:  # audit must never break the caller
+    61	            logger.error("audit.emit_failed", error=str(exc), action=event.get("action"))
+    62	
+    63	
+    64	class BigQueryAuditSink(AuditSink):  # pragma: no cover - requires GCP credentials
+    65	    name = "bigquery"
+    66	
+    67	    def __init__(self, settings: Settings) -> None:
+    68	        if not settings.gcp_project_id:
+    69	            raise RuntimeError("GCP_PROJECT_ID required when AUDIT_SINK=bigquery")
+    70	        try:
+    71	            from google.cloud import bigquery  # type: ignore
+    72	        except ImportError as exc:
+    73	            raise RuntimeError("google-cloud-bigquery not installed (uv sync --extra gcp)") from exc
+    74	        self._settings = settings
+    75	        self._client = bigquery.Client(project=settings.gcp_project_id)
+    76	        self._table = (
+    77	            f"{settings.gcp_project_id}.{settings.bigquery_dataset}.{settings.bigquery_table}"
+    78	        )
+    79	
+    80	    async def emit(self, event: dict) -> None:
+    81	        import anyio
+    82	
+    83	        row = {k: (str(v) if isinstance(v, uuid.UUID) else v) for k, v in event.items()}
+    84	        errors = await anyio.to_thread.run_sync(
+    85	            lambda: self._client.insert_rows_json(self._table, [row])
+    86	        )
+    87	        if errors:
+    88	            logger.error("audit.bigquery_insert_failed", errors=str(errors))
+
+codex
+I’ve narrowed this to a small set of concrete risks. I’m running the focused billing/audit tests now to see which paths are already covered and whether any of the review findings are likely to surface as failing behavior today.
+exec
+/bin/zsh -lc 'pytest apps/api/tests/test_billing.py apps/api/tests/test_audit.py -q' in /Users/anishguntreddi/Documents/hackathon
+ exited 1 in 172ms:
+Traceback (most recent call last):
+  File "/opt/homebrew/bin/pytest", line 7, in <module>
+    sys.exit(console_main())
+             ~~~~~~~~~~~~^^
+  File "/opt/homebrew/lib/python3.13/site-packages/_pytest/config/__init__.py", line 201, in console_main
+    code = main()
+  File "/opt/homebrew/lib/python3.13/site-packages/_pytest/config/__init__.py", line 156, in main
+    config = _prepareconfig(args, plugins)
+  File "/opt/homebrew/lib/python3.13/site-packages/_pytest/config/__init__.py", line 342, in _prepareconfig
+    config = pluginmanager.hook.pytest_cmdline_parse(
+        pluginmanager=pluginmanager, args=args
+    )
+  File "/opt/homebrew/lib/python3.13/site-packages/pluggy/_hooks.py", line 512, in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+           ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/lib/python3.13/site-packages/pluggy/_manager.py", line 120, in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+           ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/lib/python3.13/site-packages/pluggy/_callers.py", line 167, in _multicall
+    raise exception
+  File "/opt/homebrew/lib/python3.13/site-packages/pluggy/_callers.py", line 139, in _multicall
+    teardown.throw(exception)
+    ~~~~~~~~~~~~~~^^^^^^^^^^^
+  File "/opt/homebrew/lib/python3.13/site-packages/_pytest/helpconfig.py", line 112, in pytest_cmdline_parse
+    config = yield
+             ^^^^^
+  File "/opt/homebrew/lib/python3.13/site-packages/pluggy/_callers.py", line 121, in _multicall
+    res = hook_impl.function(*args)
+  File "/opt/homebrew/lib/python3.13/site-packages/_pytest/config/__init__.py", line 1146, in pytest_cmdline_parse
+    self.parse(args)
+    ~~~~~~~~~~^^^^^^
+  File "/opt/homebrew/lib/python3.13/site-packages/_pytest/config/__init__.py", line 1527, in parse
+    self._preparse(args, addopts=addopts)
+    ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/lib/python3.13/site-packages/_pytest/config/__init__.py", line 1431, in _preparse
+    self.hook.pytest_load_initial_conftests(
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+        early_config=self, args=args, parser=self._parser
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/opt/homebrew/lib/python3.13/site-packages/pluggy/_hooks.py", line 512, in __call__
+    return self._hookexec(self.name, self._hookimpls.copy(), kwargs, firstresult)
+           ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/lib/python3.13/site-packages/pluggy/_manager.py", line 120, in _hookexec
+    return self._inner_hookexec(hook_name, methods, kwargs, firstresult)
+           ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/lib/python3.13/site-packages/pluggy/_callers.py", line 167, in _multicall
+    raise exception
+  File "/opt/homebrew/lib/python3.13/site-packages/pluggy/_callers.py", line 139, in _multicall
+    teardown.throw(exception)
+    ~~~~~~~~~~~~~~^^^^^^^^^^^
+  File "/opt/homebrew/lib/python3.13/site-packages/_pytest/warnings.py", line 129, in pytest_load_initial_conftests
+    return (yield)
+            ^^^^^
+  File "/opt/homebrew/lib/python3.13/site-packages/pluggy/_callers.py", line 116, in _multicall
+    next(function_gen)  # first yield
+    ~~~~^^^^^^^^^^^^^^
+  File "/opt/homebrew/lib/python3.13/site-packages/_pytest/capture.py", line 170, in pytest_load_initial_conftests
+    capman.start_global_capturing()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/opt/homebrew/lib/python3.13/site-packages/_pytest/capture.py", line 773, in start_global_capturing
+    self._global_capturing = _get_multicapture(self._method)
+                             ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^
+  File "/opt/homebrew/lib/python3.13/site-packages/_pytest/capture.py", line 714, in _get_multicapture
+    return MultiCapture(in_=FDCapture(0), out=FDCapture(1), err=FDCapture(2))
+                                              ~~~~~~~~~^^^
+  File "/opt/homebrew/lib/python3.13/site-packages/_pytest/capture.py", line 493, in __init__
+    TemporaryFile(buffering=0),
+    ~~~~~~~~~~~~~^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.13/3.13.7/Frameworks/Python.framework/Versions/3.13/lib/python3.13/tempfile.py", line 632, in TemporaryFile
+    prefix, suffix, dir, output_type = _sanitize_params(prefix, suffix, dir)
+                                       ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.13/3.13.7/Frameworks/Python.framework/Versions/3.13/lib/python3.13/tempfile.py", line 126, in _sanitize_params
+    dir = gettempdir()
+  File "/opt/homebrew/Cellar/python@3.13/3.13.7/Frameworks/Python.framework/Versions/3.13/lib/python3.13/tempfile.py", line 316, in gettempdir
+    return _os.fsdecode(_gettempdir())
+                        ~~~~~~~~~~~^^
+  File "/opt/homebrew/Cellar/python@3.13/3.13.7/Frameworks/Python.framework/Versions/3.13/lib/python3.13/tempfile.py", line 309, in _gettempdir
+    tempdir = _get_default_tempdir()
+  File "/opt/homebrew/Cellar/python@3.13/3.13.7/Frameworks/Python.framework/Versions/3.13/lib/python3.13/tempfile.py", line 224, in _get_default_tempdir
+    raise FileNotFoundError(_errno.ENOENT,
+                            "No usable temporary directory found in %s" %
+                            dirlist)
+FileNotFoundError: [Errno 2] No usable temporary directory found in ['/var/folders/t9/rtyzkh6s4pj6wmv4khhgyb840000gn/T/', '/tmp', '/var/tmp', '/usr/tmp', '/Users/anishguntreddi/Documents/hackathon']
+
+codex
+**Findings**
+- Critical: [providers/billing.py](/Users/anishguntreddi/Documents/hackathon/apps/api/captureos/providers/billing.py:32), [providers/__init__.py](/Users/anishguntreddi/Documents/hackathon/apps/api/captureos/providers/__init__.py:122), [config.py](/Users/anishguntreddi/Documents/hackathon/apps/api/captureos/config.py:142), [api/billing.py](/Users/anishguntreddi/Documents/hackathon/apps/api/captureos/api/billing.py:66) leave the unsigned mock webhook as the default billing path. That openness is only safe if the service is truly localhost-only, but the code does not enforce that. If this config reaches any non-local environment, any caller can POST `{org_id, product, external_id}` and [services/billing.py](/Users/anishguntreddi/Documents/hackathon/apps/api/captureos/services/billing.py:66) will upgrade an arbitrary org.
+- High: [providers/billing.py](/Users/anishguntreddi/Documents/hackathon/apps/api/captureos/providers/billing.py:87) does verify Stripe signatures, but fulfillment upgrades on any signed `checkout.session.completed` and ignores the session `payment_status`. Stripe’s Checkout Session docs explicitly expose `payment_status` as the fulfillment signal: https://docs.stripe.com/api/checkout/sessions/object. A delayed/unpaid completed session can still promote the org.
+- High: [providers/billing.py](/Users/anishguntreddi/Documents/hackathon/apps/api/captureos/providers/billing.py:95), [services/billing.py](/Users/anishguntreddi/Documents/hackathon/apps/api/captureos/services/billing.py:95) only handle the initial checkout-complete event and always mark the subscription/org active. Cancellations, failed renewals, and downgrades are never applied, so premium access becomes sticky after the first checkout. Relevant Stripe lifecycle events live here: https://docs.stripe.com/api/events/types
+- Medium: [services/billing.py](/Users/anishguntreddi/Documents/hackathon/apps/api/captureos/services/billing.py:79), [models/billing.py](/Users/anishguntreddi/Documents/hackathon/apps/api/captureos/models/billing.py:37) implement idempotency as `SELECT` then `INSERT` with a unique key fallback. Concurrent duplicate webhook deliveries can race; one request will error at flush/commit instead of returning `fulfilled=false`.
+- Medium: [services/audit_dash.py](/Users/anishguntreddi/Documents/hackathon/apps/api/captureos/services/audit_dash.py:154) exports the entire org audit log into memory for CSV/JSON with no cap, window, or streaming. A single `/audit/export` can force a large DB scan and large in-memory response.
+- Low: [api/billing.py](/Users/anishguntreddi/Documents/hackathon/apps/api/captureos/api/billing.py:52), [main.py](/Users/anishguntreddi/Documents/hackathon/apps/api/captureos/main.py:75) build the Stripe `success_url` from `request.base_url` and omit the mounted `/api/v1` prefix. On same-host deployments that points at a non-existent route; on split web/API deployments it redirects to the API host, not the billing UI.
+
+I did not find a client-side plan spoof on `build-package`/`export`: those gates read `ctx.organization.plan` server-side. I also did not find a direct cross-org leak on org-scoped `/audit/*` or `/orgs/{org_id}/billing`, and I did not see any response path exposing Stripe keys/webhook secrets.
+
+I couldn’t run `pytest` here because the sandbox has no usable temp directory (`FileNotFoundError` from `tempfile`).
+tokens used
+161,830
+**Findings**
+- Critical: [providers/billing.py](/Users/anishguntreddi/Documents/hackathon/apps/api/captureos/providers/billing.py:32), [providers/__init__.py](/Users/anishguntreddi/Documents/hackathon/apps/api/captureos/providers/__init__.py:122), [config.py](/Users/anishguntreddi/Documents/hackathon/apps/api/captureos/config.py:142), [api/billing.py](/Users/anishguntreddi/Documents/hackathon/apps/api/captureos/api/billing.py:66) leave the unsigned mock webhook as the default billing path. That openness is only safe if the service is truly localhost-only, but the code does not enforce that. If this config reaches any non-local environment, any caller can POST `{org_id, product, external_id}` and [services/billing.py](/Users/anishguntreddi/Documents/hackathon/apps/api/captureos/services/billing.py:66) will upgrade an arbitrary org.
+- High: [providers/billing.py](/Users/anishguntreddi/Documents/hackathon/apps/api/captureos/providers/billing.py:87) does verify Stripe signatures, but fulfillment upgrades on any signed `checkout.session.completed` and ignores the session `payment_status`. Stripe’s Checkout Session docs explicitly expose `payment_status` as the fulfillment signal: https://docs.stripe.com/api/checkout/sessions/object. A delayed/unpaid completed session can still promote the org.
+- High: [providers/billing.py](/Users/anishguntreddi/Documents/hackathon/apps/api/captureos/providers/billing.py:95), [services/billing.py](/Users/anishguntreddi/Documents/hackathon/apps/api/captureos/services/billing.py:95) only handle the initial checkout-complete event and always mark the subscription/org active. Cancellations, failed renewals, and downgrades are never applied, so premium access becomes sticky after the first checkout. Relevant Stripe lifecycle events live here: https://docs.stripe.com/api/events/types
+- Medium: [services/billing.py](/Users/anishguntreddi/Documents/hackathon/apps/api/captureos/services/billing.py:79), [models/billing.py](/Users/anishguntreddi/Documents/hackathon/apps/api/captureos/models/billing.py:37) implement idempotency as `SELECT` then `INSERT` with a unique key fallback. Concurrent duplicate webhook deliveries can race; one request will error at flush/commit instead of returning `fulfilled=false`.
+- Medium: [services/audit_dash.py](/Users/anishguntreddi/Documents/hackathon/apps/api/captureos/services/audit_dash.py:154) exports the entire org audit log into memory for CSV/JSON with no cap, window, or streaming. A single `/audit/export` can force a large DB scan and large in-memory response.
+- Low: [api/billing.py](/Users/anishguntreddi/Documents/hackathon/apps/api/captureos/api/billing.py:52), [main.py](/Users/anishguntreddi/Documents/hackathon/apps/api/captureos/main.py:75) build the Stripe `success_url` from `request.base_url` and omit the mounted `/api/v1` prefix. On same-host deployments that points at a non-existent route; on split web/API deployments it redirects to the API host, not the billing UI.
+
+I did not find a client-side plan spoof on `build-package`/`export`: those gates read `ctx.organization.plan` server-side. I also did not find a direct cross-org leak on org-scoped `/audit/*` or `/orgs/{org_id}/billing`, and I did not see any response path exposing Stripe keys/webhook secrets.
+
+I couldn’t run `pytest` here because the sandbox has no usable temp directory (`FileNotFoundError` from `tempfile`).
+codex done exit=0

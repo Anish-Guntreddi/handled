@@ -34,22 +34,13 @@ export default function BillingPage() {
 
   const upgrade = useMutation({
     mutationFn: async (product: string) => {
+      // Checkout is authenticated + org-scoped. In mock mode it fulfills the upgrade inline
+      // (completed=true); with Stripe it returns a URL and the signed webhook fulfills it.
       const cs = await apiFetch<CheckoutResponse>(`/orgs/${orgId}/billing/checkout`, {
         method: "POST",
         body: { product },
       });
-      // Mock provider has no real Stripe callback, so we simulate the provider's verified
-      // webhook here to complete the purchase. In production Stripe calls /billing/webhook.
-      await apiFetch(`/billing/webhook`, {
-        method: "POST",
-        body: {
-          type: "checkout.completed",
-          org_id: orgId,
-          product: cs.product,
-          amount_cents: cs.amountCents,
-          external_id: cs.sessionId,
-        },
-      });
+      if (!cs.completed && cs.url) window.open(cs.url, "_blank");
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["billing", orgId] }),
   });
