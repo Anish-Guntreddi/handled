@@ -5,16 +5,28 @@
 See: .planning/PROJECT.md (updated 2026-06-19)
 
 **Core value:** Minimal inputs → filing-ready, source-backed GovCon/grant packages, human-approved, fully audited.
-**Current focus:** Phase 7 — M6 Audit Dashboard + Billing (final phase)
+**Current focus:** ✅ COMPLETE — all 7 phases (M0–M6) shipped, gated, committed. See COMPLETION.md.
 
 ## Current Position
 
-Phase: 7 of 7 (M6 Audit dashboard + billing) — STARTING
-Plan: 1 of 1 (Phases 1–6 complete)
-Status: Phases 1–6 (M0/M1/M2/M3/M4/M5) COMPLETE — gates passed. Ready to execute the final phase.
-Last activity: 2026-06-19 — M5 built (package builder, Audit/Citation gate, approval-gated MD/PDF/DOCX export), gated, committed.
+Phase: 7 of 7 (M6 Audit dashboard + billing) — DONE ✅
+Plan: 1 of 1 (all phases complete)
+Status: **PRODUCT COMPLETE.** Phases 1–7 (M0–M6) all gated + committed. Final full-system live
+uvicorn smoke 10/10. 69 pytest, ruff+mypy clean, web build clean.
+Last activity: 2026-06-19 — M6 built (audit dashboard, billing checkout/webhook, entitlement gating), gated, committed.
 
-Progress: [█████████░] ~86% (6 of 7 phases)
+Progress: [██████████] 100% (7 of 7 phases) — DONE
+
+### Phase 7 (M6) — DONE ✅ (gate passed) — FINAL
+Audit/activity dashboard: GET /orgs/{id}/audit/runs|events|metrics + export?format=csv|json
+(services/audit_dash.py; runs with steps/time_saved/tokens, metrics incl. time-saved + cost-per-filing,
+CSV/JSON download). Billing: provider abstraction (providers/billing.py mock|stripe; get_billing()),
+GET /billing (plan + entitlements + products), POST /billing/checkout (OrgOwner), top-level
+POST /billing/webhook (signature-verified for stripe / self-describing for mock; idempotent revenue +
+subscription + plan upgrade). Entitlement gating: PaymentRequiredError(402); the premium "package"
+workflow (build-package + export) requires sprint+ (services/billing.assert_entitled). UI: audit
+dashboard page + billing/plan page, linked from the workspace. 69 pytest + final 10/10 live smoke.
+New error: PaymentRequiredError. test_packaging upgrades its org to sprint to keep building packages.
 
 ### Phase 6 (M5) — DONE ✅ (gate passed)
 Package builder (WorkflowType.package_build): build_package assembles an APPROVED filing into a

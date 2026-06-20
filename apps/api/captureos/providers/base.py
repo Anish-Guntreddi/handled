@@ -134,3 +134,24 @@ class AuditSink(Protocol):
     name: str
 
     async def emit(self, event: dict) -> None: ...
+
+
+@dataclass(slots=True)
+class CheckoutSession:
+    session_id: str
+    url: str
+    product: str
+    amount_cents: int
+
+
+@runtime_checkable
+class BillingProvider(Protocol):
+    name: str
+
+    def create_checkout_session(
+        self, *, org_id: str, product: str, amount_cents: int, success_url: str
+    ) -> CheckoutSession: ...
+
+    # Returns a normalized event dict {type, org_id, product, amount_cents, external_id}
+    # when the payload is authentic, else None (CON-4: signature verified server-side).
+    def verify_and_parse_webhook(self, payload: bytes, signature: str | None) -> dict | None: ...

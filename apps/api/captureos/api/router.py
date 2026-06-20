@@ -5,7 +5,9 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from captureos.api import (
+    audit,
     auth,
+    billing,
     company_profile,
     documents,
     filings,
@@ -25,3 +27,6 @@ api_router.include_router(documents.blobs_router)
 api_router.include_router(workflows.router)
 api_router.include_router(opportunities.router)
 api_router.include_router(filings.router)
+api_router.include_router(audit.router)
+api_router.include_router(billing.router)
+api_router.include_router(billing.webhook_router)
