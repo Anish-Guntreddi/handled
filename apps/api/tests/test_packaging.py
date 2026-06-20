@@ -2,12 +2,25 @@
 
 from __future__ import annotations
 
+import uuid
+
 from httpx import AsyncClient
 from sqlalchemy import update
 
 from captureos.db.session import get_sessionmaker
 from captureos.models.filings import GeneratedDocument
+from captureos.models.org import Organization
 from tests.conftest import auth_headers, register
+
+
+async def _upgrade(org_id: str, plan: str = "sprint") -> None:
+    """Grant the org the 'package' entitlement (M6 gates package build behind sprint+)."""
+    async with get_sessionmaker()() as session:
+        await session.execute(
+            update(Organization).where(Organization.id == uuid.UUID(org_id)).values(plan=plan)
+        )
+        await session.commit()
+
 
 _DESC = (
     "We provide technical proposal writing and past-performance reference compilation. "
@@ -44,6 +57,7 @@ async def _setup_extracted_filing(client: AsyncClient, email: str) -> tuple[dict
     tokens = await register(client, email, org_name="Acme")
     headers = auth_headers(tokens)
     org_id = (await client.get("/api/v1/auth/me", headers=headers)).json()["orgs"][0]["orgId"]
+    await _upgrade(org_id)  # entitle the org to build/export packages (FR-BL-3)
     build = await client.post(
         f"/api/v1/orgs/{org_id}/company-profile/build",
         json={"name": "Acme", "industry": "IT", "description": _DESC},

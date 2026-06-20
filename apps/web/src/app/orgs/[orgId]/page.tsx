@@ -47,7 +47,7 @@ export default function OrgWorkspace() {
 
   return (
     <main className="mx-auto max-w-4xl px-6 py-10">
-      <header className="mb-8 flex items-center justify-between">
+      <header className="mb-8 flex items-start justify-between gap-4">
         <div>
           <Link href="/dashboard" className="text-sm text-neutral-500 hover:text-neutral-900">
             ← All organizations
@@ -55,6 +55,20 @@ export default function OrgWorkspace() {
           <h1 className="mt-1 text-2xl font-semibold tracking-tight">Company Brain</h1>
           <p className="text-sm text-neutral-500">Build a source-backed profile, then ingest documents.</p>
         </div>
+        <nav className="flex shrink-0 gap-2">
+          <Link
+            href={`/orgs/${orgId}/audit`}
+            className="rounded-lg border border-neutral-300 px-3 py-1.5 text-sm font-medium hover:bg-neutral-100"
+          >
+            Audit
+          </Link>
+          <Link
+            href={`/orgs/${orgId}/billing`}
+            className="rounded-lg border border-neutral-300 px-3 py-1.5 text-sm font-medium hover:bg-neutral-100"
+          >
+            Billing
+          </Link>
+        </nav>
       </header>
 
       <CompanyBrainSection

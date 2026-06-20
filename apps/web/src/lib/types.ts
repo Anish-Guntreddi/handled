@@ -51,6 +51,59 @@ export type CompanyProfile = {
 
 export type WorkflowRunCreated = { workflowRunId: string };
 
+export type WorkflowRunSummary = {
+  id: string;
+  type: string;
+  status: string;
+  filingId: string | null;
+  timeSavedMinutes: number | null;
+  inputTokens: number;
+  outputTokens: number;
+  stepCount: number;
+  createdAt?: string;
+};
+
+export type AuditEventResponse = {
+  id: string;
+  action: string;
+  actor: string;
+  actorId: string | null;
+  model: string | null;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  status: string | null;
+  filingId: string | null;
+  runId: string | null;
+  occurredAt?: string;
+};
+
+export type AuditMetrics = {
+  filings: number;
+  runs: number;
+  succeededRuns: number;
+  runsByType: Record<string, number>;
+  totalTimeSavedMinutes: number;
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  estimatedCostUsd: number;
+  costPerFilingUsd: number;
+};
+
+export type BillingStatus = {
+  plan: string;
+  subscriptionStatus: string | null;
+  entitlements: string[];
+  premiumFeatures: string[];
+  products: Record<string, number>;
+};
+
+export type CheckoutResponse = {
+  sessionId: string;
+  url: string;
+  product: string;
+  amountCents: number;
+};
+
 export type WorkflowRun = {
   id: string;
   type: string;

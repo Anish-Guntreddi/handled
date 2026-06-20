@@ -10,6 +10,7 @@ from functools import lru_cache
 
 from captureos.config import (
     AuditSinkName,
+    BillingProviderName,
     DocparseProviderName,
     EmbeddingsProviderName,
     LLMProviderName,
@@ -22,6 +23,7 @@ from captureos.config import (
 from captureos.providers.audit import BigQueryAuditSink, PostgresAuditSink
 from captureos.providers.base import (
     AuditSink,
+    BillingProvider,
     DocparseProvider,
     EmbeddingsProvider,
     LLMProvider,
@@ -30,6 +32,7 @@ from captureos.providers.base import (
     SecretsProvider,
     StorageProvider,
 )
+from captureos.providers.billing import MockBilling, StripeBilling
 from captureos.providers.docparse import DocAIDocparse, LocalDocparse
 from captureos.providers.embeddings import GeminiEmbeddings, MockEmbeddings
 from captureos.providers.llm import GeminiLLM, MockLLM
@@ -46,6 +49,7 @@ __all__ = [
     "DocparseProvider",
     "SecretsProvider",
     "AuditSink",
+    "BillingProvider",
     "get_llm",
     "get_embeddings",
     "get_storage",
@@ -53,6 +57,7 @@ __all__ = [
     "get_docparse",
     "get_secrets",
     "get_audit_sink",
+    "get_billing",
     "reset_providers",
 ]
 
@@ -113,6 +118,14 @@ def get_audit_sink(settings: Settings | None = None) -> AuditSink:
     return PostgresAuditSink(s)
 
 
+@lru_cache
+def get_billing(settings: Settings | None = None) -> BillingProvider:
+    s = settings or get_settings()
+    if s.billing_provider is BillingProviderName.stripe:
+        return StripeBilling(s)
+    return MockBilling(s)
+
+
 def reset_providers() -> None:
     """Clear cached providers (used by tests that swap config)."""
     for fn in (
@@ -123,5 +136,6 @@ def reset_providers() -> None:
         get_docparse,
         get_secrets,
         get_audit_sink,
+        get_billing,
     ):
         fn.cache_clear()

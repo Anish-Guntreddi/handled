@@ -54,6 +54,11 @@ class ConflictError(AppError):
     status_code = status.HTTP_409_CONFLICT
 
 
+class PaymentRequiredError(AppError):
+    code = "payment_required"
+    status_code = status.HTTP_402_PAYMENT_REQUIRED
+
+
 class ValidationFailed(AppError):
     code = "validation_error"
     status_code = status.HTTP_422_UNPROCESSABLE_ENTITY
