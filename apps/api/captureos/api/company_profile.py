@@ -52,7 +52,7 @@ async def _evidence_count(session: SessionDep, org_id) -> int:
     ).scalar_one()
 
 
-@router.post(":build", response_model=WorkflowRunCreated, status_code=status.HTTP_202_ACCEPTED)
+@router.post("/build", response_model=WorkflowRunCreated, status_code=status.HTTP_202_ACCEPTED)
 async def build_profile(
     body: BuildProfileRequest,
     ctx: OrgEditor,

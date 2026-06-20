@@ -152,9 +152,18 @@ function OpportunitiesSection({ orgId }: { orgId: string }) {
 }
 
 function OpportunityExpand({ orgId, opportunityId }: { orgId: string; opportunityId: string }) {
+  const router = useRouter();
   const detail = useQuery({
     queryKey: ["opportunity", orgId, opportunityId],
     queryFn: () => apiFetch<OpportunityDetail>(`/orgs/${orgId}/opportunities/${opportunityId}`),
+  });
+  const startFiling = useMutation({
+    mutationFn: () =>
+      apiFetch<{ id: string }>(`/orgs/${orgId}/filings`, {
+        method: "POST",
+        body: { opportunityId },
+      }),
+    onSuccess: (filing) => router.push(`/orgs/${orgId}/filings/${filing.id}`),
   });
   if (detail.isLoading) return <p className="px-4 pb-3 text-sm text-neutral-500">Loading…</p>;
   const d = detail.data;
@@ -189,11 +198,27 @@ function OpportunityExpand({ orgId, opportunityId }: { orgId: string; opportunit
           {(d.fitRationale?.key_factors ?? []).join("; ")}
         </div>
       )}
-      {d.sourceUrl && (
-        <a href={d.sourceUrl} target="_blank" rel="noreferrer" className="text-neutral-500 underline">
-          View source ({d.externalId})
-        </a>
-      )}
+      <div className="flex items-center justify-between gap-3 pt-1">
+        {d.sourceUrl ? (
+          <a
+            href={d.sourceUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="text-neutral-500 underline"
+          >
+            View source ({d.externalId})
+          </a>
+        ) : (
+          <span />
+        )}
+        <button
+          onClick={() => startFiling.mutate()}
+          disabled={startFiling.isPending}
+          className="rounded-lg bg-neutral-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-neutral-700 disabled:opacity-50"
+        >
+          {startFiling.isPending ? "Starting…" : "Start filing →"}
+        </button>
+      </div>
     </div>
   );
 }
@@ -231,7 +256,7 @@ function CompanyBrainSection({
   const build = useMutation({
     mutationFn: async () => {
       const { workflowRunId } = await apiFetch<WorkflowRunCreated>(
-        `/orgs/${orgId}/company-profile:build`,
+        `/orgs/${orgId}/company-profile/build`,
         { method: "POST", body: { name, websiteUrl: websiteUrl || undefined, description: description || undefined } },
       );
       const run = await pollWorkflowRun(orgId, workflowRunId);
@@ -390,7 +415,7 @@ function DocumentsSection({
 
   const ingestText = useMutation({
     mutationFn: async () => {
-      const { workflowRunId } = await apiFetch<WorkflowRunCreated>(`/orgs/${orgId}/documents:paste`, {
+      const { workflowRunId } = await apiFetch<WorkflowRunCreated>(`/orgs/${orgId}/documents/paste`, {
         method: "POST",
         body: { filename: "pasted.txt", rawText: text },
       });
@@ -405,12 +430,12 @@ function DocumentsSection({
   const uploadFile = useMutation({
     mutationFn: async (file: File) => {
       const init = await apiFetch<{ documentId: string; uploadUrl: string }>(
-        `/orgs/${orgId}/documents:initiate-upload`,
+        `/orgs/${orgId}/documents/initiate-upload`,
         { method: "POST", body: { filename: file.name, mimeType: file.type || "application/octet-stream" } },
       );
       await uploadBlob(init.uploadUrl, file);
       const { workflowRunId } = await apiFetch<WorkflowRunCreated>(
-        `/orgs/${orgId}/documents/${init.documentId}:ingest`,
+        `/orgs/${orgId}/documents/${init.documentId}/ingest`,
         { method: "POST", body: {} },
       );
       await pollWorkflowRun(orgId, workflowRunId);

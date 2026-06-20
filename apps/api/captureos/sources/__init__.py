@@ -3,12 +3,19 @@
 HTTP path used when an API key/base URL is configured."""
 
 from captureos.sources.base import DiscoveredOpportunity, OpportunityQuery, SourceAdapter
-from captureos.sources.registry import get_award_history_adapter, get_contract_adapters
+from captureos.sources.registry import (
+    get_adapters_for_kind,
+    get_award_history_adapter,
+    get_contract_adapters,
+    get_grant_adapters,
+)
 
 __all__ = [
     "DiscoveredOpportunity",
     "OpportunityQuery",
     "SourceAdapter",
     "get_contract_adapters",
+    "get_grant_adapters",
+    "get_adapters_for_kind",
     "get_award_history_adapter",
 ]

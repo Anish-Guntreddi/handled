@@ -9,7 +9,7 @@ from tests.conftest import auth_headers, register
 
 async def _build(client: AsyncClient, headers: dict, org_id: str, **body) -> dict:
     resp = await client.post(
-        f"/api/v1/orgs/{org_id}/company-profile:build", json=body, headers=headers
+        f"/api/v1/orgs/{org_id}/company-profile/build", json=body, headers=headers
     )
     assert resp.status_code == 202, resp.text
     run_id = resp.json()["workflowRunId"]

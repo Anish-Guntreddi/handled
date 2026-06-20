@@ -9,6 +9,7 @@ import uuid
 
 from sqlalchemy import select
 
+from captureos.agents.grant import GrantFitAgent, GrantFitInput
 from captureos.agents.opportunity import (
     FitScoringAgent,
     FitScoringInput,
@@ -20,7 +21,7 @@ from captureos.models.company import CompanyProfile
 from captureos.models.enums import OpportunityKind
 from captureos.models.evidence import Source
 from captureos.models.opportunities import Opportunity
-from captureos.sources import OpportunityQuery, get_award_history_adapter, get_contract_adapters
+from captureos.sources import OpportunityQuery, get_adapters_for_kind, get_award_history_adapter
 from captureos.workflows.engine import StepContext
 
 logger = get_logger(__name__)
@@ -60,7 +61,7 @@ async def discover_opportunities(ctx: StepContext) -> dict:
     )
 
     discovered = []
-    for adapter in get_contract_adapters():
+    for adapter in get_adapters_for_kind(query.kind):
         try:
             discovered.extend(await adapter.search(query))
         except Exception as exc:  # noqa: BLE001 - one source failing yields partial results
@@ -107,6 +108,10 @@ async def discover_opportunities(ctx: StepContext) -> dict:
 
 async def research_top_opportunities(ctx: StepContext, state: dict) -> None:
     session = ctx.session
+    # Award-history research is contract-specific; grants are scored on eligibility instead.
+    if ctx.params.get("kind") == OpportunityKind.grant.value:
+        ctx.merge_results(researched=0)
+        return
     ids = state["opportunity_ids"][:_RESEARCH_TOP_N]
     adapter = get_award_history_adapter()
     agent = OpportunityResearchAgent()
@@ -143,6 +148,7 @@ async def research_top_opportunities(ctx: StepContext, state: dict) -> None:
 
 async def score_opportunities(ctx: StepContext, state: dict) -> None:
     session = ctx.session
+    kind = ctx.params.get("kind", OpportunityKind.gov_contract.value)
     profile = await _get_profile(ctx)
     company_naics = [
         g.get("code") for g in (profile.naics_guesses if profile else []) if g.get("code")
@@ -153,27 +159,45 @@ async def score_opportunities(ctx: StepContext, state: dict) -> None:
     company_certs = [
         c.get("name") for c in (profile.certifications if profile else []) if c.get("name")
     ]
+    company_funding = list(profile.funding_categories) if profile else []
     company_location = profile.location if profile else None
-    agent = FitScoringAgent()
+
+    contract_agent = FitScoringAgent()
+    grant_agent = GrantFitAgent()
 
     for oid in state["opportunity_ids"]:
         opp = await session.get(Opportunity, oid)
         if opp is None:
             continue
-        out = await agent.run(
-            ctx.agent_context(),
-            FitScoringInput(
-                company_naics=company_naics,
-                company_services=company_services,
-                company_certifications=company_certs,
-                company_location=company_location,
-                opportunity_title=opp.title,
-                opportunity_sponsor=opp.sponsor,
-                opportunity_naics=opp.details.get("naics"),
-                opportunity_set_aside=opp.details.get("set_aside"),
-                opportunity_location=opp.details.get("place_of_performance"),
-            ),
-        )
+        if kind == OpportunityKind.grant.value:
+            out = await grant_agent.run(
+                ctx.agent_context(),
+                GrantFitInput(
+                    company_industry=(profile.industry if profile else None),
+                    company_services=company_services,
+                    company_funding_categories=company_funding,
+                    company_location=company_location,
+                    grant_title=opp.title,
+                    grant_funder=opp.sponsor,
+                    grant_eligibility=opp.details.get("eligibility"),
+                    grant_category=opp.details.get("category"),
+                ),
+            )
+        else:
+            out = await contract_agent.run(
+                ctx.agent_context(),
+                FitScoringInput(
+                    company_naics=company_naics,
+                    company_services=company_services,
+                    company_certifications=company_certs,
+                    company_location=company_location,
+                    opportunity_title=opp.title,
+                    opportunity_sponsor=opp.sponsor,
+                    opportunity_naics=opp.details.get("naics"),
+                    opportunity_set_aside=opp.details.get("set_aside"),
+                    opportunity_location=opp.details.get("place_of_performance"),
+                ),
+            )
         opp.fit_score = out.fit_score
         opp.decision_hint = out.decision_hint
         opp.fit_rationale = {

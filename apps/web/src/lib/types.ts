@@ -94,3 +94,30 @@ export type OpportunityDetail = OpportunitySummary & {
   };
   rawText: string | null;
 };
+
+export type FilingResponse = {
+  id: string;
+  opportunityId: string;
+  kind: string;
+  status: string;
+  ownerUserId: string | null;
+  createdAt?: string;
+};
+
+export type RequirementResponse = {
+  id: string;
+  text: string;
+  category: string;
+  mandatory: boolean;
+  locator: string | null;
+  needsReview: boolean;
+  sourceId: string | null;
+};
+
+export type FilingAggregate = {
+  filing: FilingResponse;
+  opportunity: OpportunitySummary | null;
+  requirements: RequirementResponse[];
+  requirementCount: number;
+  status: string;
+};

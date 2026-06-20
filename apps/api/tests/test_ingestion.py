@@ -28,7 +28,7 @@ async def _run_status(client: AsyncClient, headers: dict, org_id: str, run_id: s
 async def test_paste_ingestion_creates_chunks(client: AsyncClient) -> None:
     headers, org_id = await _bootstrap_org(client, "ing1@example.com")
     resp = await client.post(
-        f"/api/v1/orgs/{org_id}/documents:paste",
+        f"/api/v1/orgs/{org_id}/documents/paste",
         json={"filename": "rfp.txt", "rawText": _SOLICITATION},
         headers=headers,
     )
@@ -46,10 +46,10 @@ async def test_paste_ingestion_creates_chunks(client: AsyncClient) -> None:
 async def test_ingestion_is_idempotent(client: AsyncClient) -> None:
     headers, org_id = await _bootstrap_org(client, "ing2@example.com")
     body = {"filename": "rfp.txt", "rawText": _SOLICITATION}
-    first = await client.post(f"/api/v1/orgs/{org_id}/documents:paste", json=body, headers=headers)
+    first = await client.post(f"/api/v1/orgs/{org_id}/documents/paste", json=body, headers=headers)
     await _run_status(client, headers, org_id, first.json()["workflowRunId"])
 
-    second = await client.post(f"/api/v1/orgs/{org_id}/documents:paste", json=body, headers=headers)
+    second = await client.post(f"/api/v1/orgs/{org_id}/documents/paste", json=body, headers=headers)
     run2 = await _run_status(client, headers, org_id, second.json()["workflowRunId"])
     assert run2["status"] == "succeeded"
     assert run2["partialResults"]["deduped"] is True  # FR-DI-6
@@ -58,7 +58,7 @@ async def test_ingestion_is_idempotent(client: AsyncClient) -> None:
 async def test_upload_then_ingest(client: AsyncClient) -> None:
     headers, org_id = await _bootstrap_org(client, "ing3@example.com")
     init = await client.post(
-        f"/api/v1/orgs/{org_id}/documents:initiate-upload",
+        f"/api/v1/orgs/{org_id}/documents/initiate-upload",
         json={"filename": "capabilities.txt", "mimeType": "text/plain"},
         headers=headers,
     )
@@ -70,7 +70,7 @@ async def test_upload_then_ingest(client: AsyncClient) -> None:
     assert put.status_code == 200, put.text
 
     ingest = await client.post(
-        f"/api/v1/orgs/{org_id}/documents/{doc_id}:ingest", json={}, headers=headers
+        f"/api/v1/orgs/{org_id}/documents/{doc_id}/ingest", json={}, headers=headers
     )
     assert ingest.status_code == 202, ingest.text
     run = await _run_status(client, headers, org_id, ingest.json()["workflowRunId"])
@@ -81,7 +81,7 @@ async def test_upload_then_ingest(client: AsyncClient) -> None:
 async def test_blob_upload_is_org_scoped(client: AsyncClient) -> None:
     headers_a, org_a = await _bootstrap_org(client, "ing-a@example.com")
     init = await client.post(
-        f"/api/v1/orgs/{org_a}/documents:initiate-upload",
+        f"/api/v1/orgs/{org_a}/documents/initiate-upload",
         json={"filename": "secret.txt", "mimeType": "text/plain"},
         headers=headers_a,
     )
