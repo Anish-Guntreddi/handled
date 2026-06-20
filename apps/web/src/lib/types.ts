@@ -142,6 +142,26 @@ export type ApprovalItem = {
   createdAt?: string;
 };
 
+export type GeneratedDocSummary = {
+  id: string;
+  type: string;
+  version: number;
+  status: string;
+  citationValidated: boolean;
+  citationCount: number;
+  contentMd: string | null;
+};
+
+export type PackageView = {
+  filingId: string;
+  status: string;
+  version: number | null;
+  documents: GeneratedDocSummary[];
+  allCitationsValid: boolean;
+  canApprove: boolean;
+  canExport: boolean;
+};
+
 export type FilingAggregate = {
   filing: FilingResponse;
   opportunity: OpportunitySummary | null;
@@ -153,4 +173,6 @@ export type FilingAggregate = {
   matchSummary: Record<string, number>;
   recommendation: RecommendationDetail | null;
   approvals: ApprovalItem[];
+  generatedDocuments: GeneratedDocSummary[];
+  packageReady: boolean;
 };

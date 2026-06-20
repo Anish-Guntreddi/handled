@@ -5,11 +5,17 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from captureos.models.enums import ApprovalDecision, ApprovalTarget, FilingStatus
-from captureos.models.filings import Approval, Filing, Recommendation
+from captureos.core.errors import ValidationFailed
+from captureos.models.enums import (
+    ApprovalDecision,
+    ApprovalTarget,
+    FilingStatus,
+    GeneratedDocStatus,
+)
+from captureos.models.filings import Approval, Filing, GeneratedDocument, Recommendation
 
 
 async def record_approval(
@@ -45,8 +51,39 @@ async def record_approval(
         # Approved → ready to package (FR-AP-1). Rejected → back to editable (FR-AP-3).
         filing.status = FilingStatus.approved.value if approved else FilingStatus.recommended.value
     elif target == ApprovalTarget.package.value:
-        # Package export gate (FR-AP-2 / CON-1); M5 builds the package itself.
-        filing.status = FilingStatus.ready.value if approved else FilingStatus.package_review.value
+        if approved:
+            # CON-2 gate: the package can only become `ready` if every document in the latest
+            # version passed the Audit/Citation check (no unsourced claims).
+            version = (
+                await session.execute(
+                    select(func.max(GeneratedDocument.version)).where(
+                        GeneratedDocument.filing_id == filing.id
+                    )
+                )
+            ).scalar_one()
+            if version is None:
+                raise ValidationFailed("Build the package before approving it")
+            docs = (
+                (
+                    await session.execute(
+                        select(GeneratedDocument).where(
+                            GeneratedDocument.filing_id == filing.id,
+                            GeneratedDocument.version == version,
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            if not docs or any(not d.citation_validated for d in docs):
+                raise ValidationFailed(
+                    "Package has unsourced claims and cannot be approved for export (CON-2)"
+                )
+            for doc in docs:
+                doc.status = GeneratedDocStatus.ready.value
+            filing.status = FilingStatus.ready.value
+        else:
+            filing.status = FilingStatus.package_review.value
 
     await session.flush()
     return filing
