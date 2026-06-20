@@ -64,9 +64,7 @@ async def run_requirement_extraction(ctx: StepContext) -> None:
     if not text.strip():
         # Flagged, not silent (FR-RE-2): pause for the user to supply the solicitation.
         filing.status = FilingStatus.evidence_review.value
-        raise NeedsInput(
-            "No solicitation text available; paste or upload the solicitation first."
-        )
+        raise NeedsInput("No solicitation text available; paste or upload the solicitation first.")
 
     output = await RequirementExtractionAgent().run(
         ctx.agent_context(),

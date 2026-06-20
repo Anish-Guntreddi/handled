@@ -5,16 +5,29 @@
 See: .planning/PROJECT.md (updated 2026-06-19)
 
 **Core value:** Minimal inputs → filing-ready, source-backed GovCon/grant packages, human-approved, fully audited.
-**Current focus:** Phase 1 — M0 Foundation
+**Current focus:** Phase 6 — M5 Package Builder + Export
 
 ## Current Position
 
-Phase: 5 of 7 (M4 Evidence matching + recommendation) — STARTING
-Plan: 1 of 1 (Phases 1–4 complete)
-Status: Phases 1–4 (M0/M1/M2/M3) COMPLETE — gates passed. Ready to execute Phase 5.
-Last activity: 2026-06-19 — M3 built (grants, Filings, requirement extraction), gated, committed.
+Phase: 6 of 7 (M5 Package builder + export) — STARTING
+Plan: 1 of 1 (Phases 1–5 complete)
+Status: Phases 1–5 (M0/M1/M2/M3/M4) COMPLETE — gates passed. Ready to execute Phase 6.
+Last activity: 2026-06-19 — M4 built (evidence matching, compliance matrix, recommendation, approval), gated, committed.
 
-Progress: [██████░░░░] ~57% (4 of 7 phases)
+Progress: [███████░░░] ~71% (5 of 7 phases)
+
+### Phase 5 (M4) — DONE ✅ (gate passed)
+Evidence Acquisition (pgvector RAG over document_chunks → materialize relevant chunks as sourced
+evidence) + Evidence Mapping (keyword-overlap scoring, deterministic offline) → evidence_matches
+(matched/partial/missing/user_provided + score, CON-2 cited). Live compliance matrix
+(filing_requirements ⋈ evidence_matches, FR-EM-4). Gap resolution (value/document → flips to
+user_provided). Fit Recommendation agent (pursue/do_not_pursue + score + rationale
+{for,against,key_gaps}, draft until approved). Human approval gate advances the filing state
+machine; reject returns to editable. APIs: match-evidence, recommend, gaps/{reqId}/resolve,
+approvals (slash sub-paths). 56 pytest + 7 live uvicorn checks; ruff/mypy/web-build clean.
+CON-2 hardening: a non-missing match row must cite an evidence_item or it degrades to missing.
+Key design: mock embeddings are non-semantic → pgvector RAG retrieves candidates but match
+SCORING is keyword-overlap (meaningful + deterministic offline; real-semantic in prod).
 
 ### Phase 4 (M3) — DONE ✅ (gate passed)
 Grants vertical (Grants.gov adapter; kind-aware discovery/scoring; GrantFitAgent apply/no_apply).

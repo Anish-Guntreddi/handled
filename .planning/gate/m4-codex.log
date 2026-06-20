@@ -1,0 +1,3661 @@
+Reading additional input from stdin...
+OpenAI Codex v0.130.0
+--------
+workdir: /Users/anishguntreddi/Documents/hackathon
+model: gpt-5.4
+provider: openai
+approval: never
+sandbox: read-only
+reasoning effort: xhigh
+reasoning summaries: none
+session id: 019ee274-cbd7-77e2-8e1d-454f4fff7fe0
+--------
+user
+Review the CaptureOS M4 changeset (evidence matching + recommendation + approval) in apps/api/captureos for correctness and security. Focus on:
+1) CON-5 multi-tenant isolation: services/evidence.py, services/recommendation.py, services/gaps.py, services/compliance.py, api/filings.py — can one org read/affect another org's filings, requirements, matches, evidence, recommendations, or approvals?
+2) CON-2 citations: can a 'matched'/'partial'/'user_provided' evidence_match row exist without a resolvable evidence_item_id? Trace map_evidence and resolve_gap.
+3) Approval state machine (services/approvals.py): is the recommendation only actionable after human approval? Any way to auto-advance without approval?
+4) The evidence matching logic (agents/matching.py keyword scoring; ingestion/retrieval.py pgvector): correctness, ReDoS in _significant_words, SQL injection, unbounded loops/DoS.
+5) Any pgvector misuse (cosine_distance), N+1, or missing org filters.
+Report concrete findings as file:line with severity (critical/high/medium/low). Be terse.
+codex
+Reviewing the CaptureOS M4 changeset in `apps/api/captureos`. I’m starting by locating the changed files and reading the tenant, citations, approval, and matching paths before I assess findings.
+  → Identify M4 changeset scope in apps/api/captureos and read target files
+  • Trace multi-tenant access paths and org filters across evidence/recommendation/gaps/compliance/filings
+  • Trace citation invariants and approval state machine behavior
+  • Review matching/retrieval logic for correctness and security/perf issues
+  • Summarize concrete findings with severity and file:line references
+exec
+/bin/zsh -lc "pwd && rg --files apps/api/captureos | sed 's#"'^#/#'"'" in /Users/anishguntreddi/Documents/hackathon
+ succeeded in 0ms:
+/Users/anishguntreddi/Documents/hackathon
+/apps/api/captureos/logging.py
+/apps/api/captureos/config.py
+/apps/api/captureos/agents/base.py
+/apps/api/captureos/agents/opportunity.py
+/apps/api/captureos/agents/requirements.py
+/apps/api/captureos/agents/grant.py
+/apps/api/captureos/agents/recommendation.py
+/apps/api/captureos/agents/matching.py
+/apps/api/captureos/agents/__init__.py
+/apps/api/captureos/agents/company_brain.py
+/apps/api/captureos/__init__.py
+/apps/api/captureos/auth/base.py
+/apps/api/captureos/auth/firebase.py
+/apps/api/captureos/auth/__init__.py
+/apps/api/captureos/auth/local.py
+/apps/api/captureos/providers/llm.py
+/apps/api/captureos/providers/__init__.py
+/apps/api/captureos/providers/audit.py
+/apps/api/captureos/providers/docparse.py
+/apps/api/captureos/providers/queue.py
+/apps/api/captureos/providers/secrets.py
+/apps/api/captureos/providers/embeddings.py
+/apps/api/captureos/providers/storage.py
+/apps/api/captureos/providers/base.py
+/apps/api/captureos/db/__init__.py
+/apps/api/captureos/db/session.py
+/apps/api/captureos/db/migrate.py
+/apps/api/captureos/db/base.py
+/apps/api/captureos/ingestion/website.py
+/apps/api/captureos/ingestion/retrieval.py
+/apps/api/captureos/ingestion/__init__.py
+/apps/api/captureos/ingestion/chunking.py
+/apps/api/captureos/ingestion/service.py
+/apps/api/captureos/scripts/seed.py
+/apps/api/captureos/scripts/__init__.py
+/apps/api/captureos/core/security.py
+/apps/api/captureos/core/deps.py
+/apps/api/captureos/core/__init__.py
+/apps/api/captureos/core/errors.py
+/apps/api/captureos/main.py
+/apps/api/captureos/api/router.py
+/apps/api/captureos/api/workflows.py
+/apps/api/captureos/api/filings.py
+/apps/api/captureos/api/opportunities.py
+/apps/api/captureos/api/__init__.py
+/apps/api/captureos/api/orgs.py
+/apps/api/captureos/api/documents.py
+/apps/api/captureos/api/health.py
+/apps/api/captureos/api/company_profile.py
+/apps/api/captureos/api/auth.py
+/apps/api/captureos/workflows/pipelines.py
+/apps/api/captureos/workflows/engine.py
+/apps/api/captureos/workflows/__init__.py
+/apps/api/captureos/workflows/dispatch.py
+/apps/api/captureos/workflows/runner.py
+/apps/api/captureos/workflows/queue.py
+/apps/api/captureos/sources/base.py
+/apps/api/captureos/sources/grants_gov.py
+/apps/api/captureos/sources/usaspending.py
+/apps/api/captureos/sources/sam_gov.py
+/apps/api/captureos/sources/cache.py
+/apps/api/captureos/sources/registry.py
+/apps/api/captureos/sources/__init__.py
+/apps/api/captureos/audit/__init__.py
+/apps/api/captureos/worker/main.py
+/apps/api/captureos/audit/service.py
+/apps/api/captureos/worker/__init__.py
+/apps/api/captureos/schemas/workflow.py
+/apps/api/captureos/schemas/opportunity.py
+/apps/api/captureos/schemas/document.py
+/apps/api/captureos/schemas/common.py
+/apps/api/captureos/schemas/__init__.py
+/apps/api/captureos/schemas/filing.py
+/apps/api/captureos/schemas/company.py
+/apps/api/captureos/schemas/org.py
+/apps/api/captureos/schemas/auth.py
+/apps/api/captureos/models/evidence.py
+/apps/api/captureos/services/evidence.py
+/apps/api/captureos/models/workflow.py
+/apps/api/captureos/models/filings.py
+/apps/api/captureos/models/opportunities.py
+/apps/api/captureos/models/jobs.py
+/apps/api/captureos/models/__init__.py
+/apps/api/captureos/models/documents.py
+/apps/api/captureos/models/billing.py
+/apps/api/captureos/models/audit.py
+/apps/api/captureos/models/company.py
+/apps/api/captureos/models/org.py
+/apps/api/captureos/models/enums.py
+/apps/api/captureos/services/__init__.py
+/apps/api/captureos/services/documents.py
+/apps/api/captureos/services/company_brain.py
+/apps/api/captureos/services/compliance.py
+/apps/api/captureos/services/approvals.py
+/apps/api/captureos/services/filings.py
+/apps/api/captureos/services/recommendation.py
+/apps/api/captureos/services/scan.py
+/apps/api/captureos/services/gaps.py
+
+exec
+/bin/zsh -lc 'git status --short apps/api/captureos && git diff --stat -- apps/api/captureos && git diff --name-only -- apps/api/captureos' in /Users/anishguntreddi/Documents/hackathon
+ succeeded in 0ms:
+ M apps/api/captureos/api/filings.py
+ M apps/api/captureos/schemas/filing.py
+ M apps/api/captureos/services/filings.py
+ M apps/api/captureos/workflows/pipelines.py
+?? apps/api/captureos/agents/matching.py
+?? apps/api/captureos/agents/recommendation.py
+?? apps/api/captureos/ingestion/retrieval.py
+?? apps/api/captureos/services/approvals.py
+?? apps/api/captureos/services/compliance.py
+?? apps/api/captureos/services/evidence.py
+?? apps/api/captureos/services/gaps.py
+?? apps/api/captureos/services/recommendation.py
+ apps/api/captureos/api/filings.py         | 197 ++++++++++++++++++++++++++----
+ apps/api/captureos/schemas/filing.py      |  44 +++++++
+ apps/api/captureos/services/filings.py    |   4 +-
+ apps/api/captureos/workflows/pipelines.py |  21 ++++
+ 4 files changed, 241 insertions(+), 25 deletions(-)
+apps/api/captureos/api/filings.py
+apps/api/captureos/schemas/filing.py
+apps/api/captureos/services/filings.py
+apps/api/captureos/workflows/pipelines.py
+
+codex
+I’ve got the scope: four modified files plus seven new service/agent modules. Next I’m reading the model and service paths together so I can trace org scoping and state transitions end to end.
+exec
+/bin/zsh -lc "nl -ba apps/api/captureos/services/evidence.py | sed -n '1,260p'" in /Users/anishguntreddi/Documents/hackathon
+exec
+/bin/zsh -lc "nl -ba apps/api/captureos/models/enums.py | sed -n '1,260p'" in /Users/anishguntreddi/Documents/hackathon
+ succeeded in 0ms:
+     1	"""Evidence acquisition + mapping (FR-EM-1/2/4).
+     2	
+     3	Acquisition: pgvector-retrieve relevant document chunks per requirement and materialize the
+     4	keyword-relevant ones as sourced evidence_items (enriching the vault). Mapping: score every
+     5	requirement against the vault and persist evidence_matches (matched/partial/missing)."""
+     6	
+     7	from __future__ import annotations
+     8	
+     9	import uuid
+    10	from collections.abc import Sequence
+    11	
+    12	from sqlalchemy import delete, select
+    13	from sqlalchemy.ext.asyncio import AsyncSession
+    14	
+    15	from captureos.agents.matching import (
+    16	    EvidenceCandidate,
+    17	    EvidenceMappingAgent,
+    18	    EvidenceMatchInput,
+    19	    _significant_words,
+    20	)
+    21	from captureos.ingestion.retrieval import retrieve_relevant_chunks
+    22	from captureos.models.enums import EvidenceOrigin, EvidenceType, FilingStatus, MatchStatus
+    23	from captureos.models.evidence import EvidenceItem, Source
+    24	from captureos.models.filings import EvidenceMatch, Filing, FilingRequirement
+    25	from captureos.workflows.engine import StepContext
+    26	
+    27	_RETRIEVE_K = 3
+    28	_MAX_CANDIDATES = 12
+    29	_MATERIALIZE_MIN_OVERLAP = 0.15
+    30	
+    31	
+    32	def _overlap(req_text: str, evidence_text: str) -> float:
+    33	    req = _significant_words(req_text)
+    34	    if not req:
+    35	        return 0.0
+    36	    return len(req & _significant_words(evidence_text)) / len(req)
+    37	
+    38	
+    39	async def _load_filing(ctx: StepContext) -> Filing:
+    40	    filing_id = uuid.UUID(str(ctx.params["filing_id"]))
+    41	    filing = (
+    42	        await ctx.session.execute(
+    43	            select(Filing).where(Filing.id == filing_id, Filing.org_id == ctx.org_id)
+    44	        )
+    45	    ).scalar_one_or_none()
+    46	    if filing is None:
+    47	        raise ValueError("Filing not found")
+    48	    return filing
+    49	
+    50	
+    51	async def _document_source_id(
+    52	    session: AsyncSession, org_id: uuid.UUID, document_id: uuid.UUID
+    53	) -> uuid.UUID | None:
+    54	    return (
+    55	        (
+    56	            await session.execute(
+    57	                select(Source.id).where(Source.org_id == org_id, Source.document_id == document_id)
+    58	            )
+    59	        )
+    60	        .scalars()
+    61	        .first()
+    62	    )
+    63	
+    64	
+    65	async def _requirements(ctx: StepContext, filing_id: uuid.UUID) -> Sequence[FilingRequirement]:
+    66	    return (
+    67	        (
+    68	            await ctx.session.execute(
+    69	                select(FilingRequirement).where(FilingRequirement.filing_id == filing_id)
+    70	            )
+    71	        )
+    72	        .scalars()
+    73	        .all()
+    74	    )
+    75	
+    76	
+    77	async def _org_evidence(ctx: StepContext) -> Sequence[EvidenceItem]:
+    78	    return (
+    79	        (await ctx.session.execute(select(EvidenceItem).where(EvidenceItem.org_id == ctx.org_id)))
+    80	        .scalars()
+    81	        .all()
+    82	    )
+    83	
+    84	
+    85	async def acquire_evidence(ctx: StepContext) -> None:
+    86	    """RAG: pull relevant document chunks for each requirement and materialize the
+    87	    keyword-relevant ones as sourced evidence_items (deduped by chunk)."""
+    88	    session = ctx.session
+    89	    filing = await _load_filing(ctx)
+    90	    requirements = await _requirements(ctx, filing.id)
+    91	
+    92	    already = {
+    93	        ev.document_chunk_id for ev in await _org_evidence(ctx) if ev.document_chunk_id is not None
+    94	    }
+    95	    materialized = 0
+    96	    for req in requirements:
+    97	        for chunk, _distance in await retrieve_relevant_chunks(
+    98	            session, ctx.org_id, req.text, k=_RETRIEVE_K
+    99	        ):
+   100	            if chunk.id in already or _overlap(req.text, chunk.text) < _MATERIALIZE_MIN_OVERLAP:
+   101	                continue
+   102	            source_id = await _document_source_id(session, ctx.org_id, chunk.document_id)
+   103	            session.add(
+   104	                EvidenceItem(
+   105	                    org_id=ctx.org_id,
+   106	                    type=EvidenceType.fact.value,
+   107	                    content=chunk.text[:500],
+   108	                    source_id=source_id,
+   109	                    origin=EvidenceOrigin.inferred.value,
+   110	                    document_chunk_id=chunk.id,
+   111	                )
+   112	            )
+   113	            already.add(chunk.id)
+   114	            materialized += 1
+   115	    await session.flush()
+   116	    ctx.merge_results(evidenceAcquired=materialized)
+   117	
+   118	
+   119	async def map_evidence(ctx: StepContext) -> None:
+   120	    session = ctx.session
+   121	    filing = await _load_filing(ctx)
+   122	    requirements = await _requirements(ctx, filing.id)
+   123	    evidence = await _org_evidence(ctx)
+   124	    by_ref = {f"item:{ev.id}": ev for ev in evidence}
+   125	
+   126	    # Recompute from scratch; user_provided evidence is re-discovered (its origin sets status).
+   127	    await session.execute(delete(EvidenceMatch).where(EvidenceMatch.filing_id == filing.id))
+   128	
+   129	    agent = EvidenceMappingAgent()
+   130	    counts = {"matched": 0, "partial": 0, "missing": 0, "user_provided": 0}
+   131	    for req in requirements:
+   132	        ranked = sorted(evidence, key=lambda ev: _overlap(req.text, ev.content), reverse=True)
+   133	        candidates = [
+   134	            EvidenceCandidate(ref=f"item:{ev.id}", content=ev.content)
+   135	            for ev in ranked[:_MAX_CANDIDATES]
+   136	            if _overlap(req.text, ev.content) > 0
+   137	        ]
+   138	        out = await agent.run(
+   139	            ctx.agent_context(),
+   140	            EvidenceMatchInput(
+   141	                requirement_text=req.text,
+   142	                requirement_category=req.category,
+   143	                candidates=candidates,
+   144	            ),
+   145	        )
+   146	        status = out.status
+   147	        evidence_item_id: uuid.UUID | None = None
+   148	        if out.best_ref and out.best_ref in by_ref:
+   149	            best = by_ref[out.best_ref]
+   150	            evidence_item_id = best.id
+   151	            if (
+   152	                status == MatchStatus.matched.value
+   153	                and best.origin == EvidenceOrigin.user_provided.value
+   154	            ):
+   155	                status = MatchStatus.user_provided.value
+   156	        # CON-2: a claim-bearing match must cite an evidence item. If the model named a
+   157	        # non-existent ref (or none), it cannot claim a match — degrade to missing.
+   158	        if evidence_item_id is None and status != MatchStatus.missing.value:
+   159	            status = MatchStatus.missing.value
+   160	        session.add(
+   161	            EvidenceMatch(
+   162	                org_id=ctx.org_id,
+   163	                filing_id=filing.id,
+   164	                requirement_id=req.id,
+   165	                evidence_item_id=evidence_item_id,
+   166	                score=out.score,
+   167	                status=status,
+   168	                rationale=out.rationale,
+   169	            )
+   170	        )
+   171	        counts[status] = counts.get(status, 0) + 1
+   172	
+   173	    filing.status = FilingStatus.evidence_review.value
+   174	    await session.flush()
+   175	    ctx.merge_results(
+   176	        matched=counts["matched"] + counts["user_provided"],
+   177	        partial=counts["partial"],
+   178	        missing=counts["missing"],
+   179	        gaps=counts["partial"] + counts["missing"],
+   180	    )
+
+ succeeded in 0ms:
+     1	"""Domain enums. Stored as strings in Postgres (cheap to evolve), validated in the app.
+     2	
+     3	Single source of truth for allowed values — imported by ORM models (defaults) and
+     4	Pydantic schemas (validation).
+     5	"""
+     6	
+     7	from __future__ import annotations
+     8	
+     9	from enum import StrEnum
+    10	
+    11	
+    12	class OrgPlan(StrEnum):
+    13	    free = "free"
+    14	    audit = "audit"
+    15	    sprint = "sprint"
+    16	    autopilot = "autopilot"
+    17	
+    18	
+    19	class OrgRole(StrEnum):
+    20	    owner = "owner"
+    21	    editor = "editor"
+    22	    viewer = "viewer"
+    23	
+    24	
+    25	class DocumentSourceKind(StrEnum):
+    26	    upload = "upload"
+    27	    paste = "paste"
+    28	    drive_connector = "drive_connector"
+    29	
+    30	
+    31	class ParseStatus(StrEnum):
+    32	    pending = "pending"
+    33	    parsing = "parsing"
+    34	    parsed = "parsed"
+    35	    failed = "failed"
+    36	
+    37	
+    38	class SourceKind(StrEnum):
+    39	    sam_gov = "sam_gov"
+    40	    usaspending = "usaspending"
+    41	    grants_gov = "grants_gov"
+    42	    web = "web"
+    43	    document = "document"
+    44	    user_input = "user_input"
+    45	
+    46	
+    47	class EvidenceType(StrEnum):
+    48	    service = "service"
+    49	    past_performance = "past_performance"
+    50	    certification = "certification"
+    51	    fact = "fact"
+    52	    metric = "metric"
+    53	
+    54	
+    55	class EvidenceOrigin(StrEnum):
+    56	    inferred = "inferred"
+    57	    user_provided = "user_provided"
+    58	
+    59	
+    60	class OpportunityKind(StrEnum):
+    61	    gov_contract = "gov_contract"
+    62	    grant = "grant"
+    63	    # Future verticals (schema-ready, not implemented in MVP):
+    64	    permit = "permit"
+    65	    license = "license"
+    66	    certification = "certification"
+    67	    vendor_packet = "vendor_packet"
+    68	    compliance_packet = "compliance_packet"
+    69	
+    70	
+    71	class FilingStatus(StrEnum):
+    72	    draft = "draft"
+    73	    researching = "researching"
+    74	    evidence_review = "evidence_review"
+    75	    recommended = "recommended"
+    76	    approved = "approved"
+    77	    packaging = "packaging"
+    78	    package_review = "package_review"
+    79	    ready = "ready"
+    80	    archived = "archived"
+    81	    rejected = "rejected"
+    82	
+    83	
+    84	class RequirementCategory(StrEnum):
+    85	    eligibility = "eligibility"
+    86	    technical = "technical"
+    87	    past_performance = "past_performance"
+    88	    certification = "certification"
+    89	    formatting = "formatting"
+    90	    attachment = "attachment"
+    91	    other = "other"
+    92	
+    93	
+    94	class MatchStatus(StrEnum):
+    95	    matched = "matched"
+    96	    partial = "partial"
+    97	    missing = "missing"
+    98	    user_provided = "user_provided"
+    99	
+   100	
+   101	class RecommendationDecision(StrEnum):
+   102	    pursue = "pursue"
+   103	    do_not_pursue = "do_not_pursue"
+   104	
+   105	
+   106	class GeneratedDocType(StrEnum):
+   107	    compliance_matrix = "compliance_matrix"
+   108	    narrative = "narrative"
+   109	    capability_statement = "capability_statement"
+   110	    attachment_checklist = "attachment_checklist"
+   111	    missing_items = "missing_items"
+   112	    citation_appendix = "citation_appendix"
+   113	    proposal_outline = "proposal_outline"
+   114	    budget_checklist = "budget_checklist"
+   115	    submission_checklist = "submission_checklist"
+   116	
+   117	
+   118	class GeneratedDocStatus(StrEnum):
+   119	    draft = "draft"
+   120	    review = "review"
+   121	    ready = "ready"
+   122	
+   123	
+   124	class ApprovalTarget(StrEnum):
+   125	    recommendation = "recommendation"
+   126	    package = "package"
+   127	
+   128	
+   129	class ApprovalDecision(StrEnum):
+   130	    approved = "approved"
+   131	    rejected = "rejected"
+   132	
+   133	
+   134	class WorkflowType(StrEnum):
+   135	    company_brain = "company_brain"
+   136	    document_ingest = "document_ingest"
+   137	    opportunity_scan = "opportunity_scan"
+   138	    requirement_extraction = "requirement_extraction"
+   139	    evidence_match = "evidence_match"
+   140	    gap_resolution = "gap_resolution"
+   141	    recommendation = "recommendation"
+   142	    package_build = "package_build"
+   143	
+   144	
+   145	class WorkflowStatus(StrEnum):
+   146	    queued = "queued"
+   147	    running = "running"
+   148	    succeeded = "succeeded"
+   149	    failed = "failed"
+   150	    needs_input = "needs_input"
+   151	
+   152	
+   153	class StepStatus(StrEnum):
+   154	    pending = "pending"
+   155	    running = "running"
+   156	    done = "done"
+   157	    failed = "failed"
+   158	    skipped = "skipped"
+   159	
+   160	
+   161	class AgentRunStatus(StrEnum):
+   162	    success = "success"
+   163	    retried = "retried"
+   164	    failed = "failed"
+   165	
+   166	
+   167	class ActorType(StrEnum):
+   168	    user = "user"
+   169	    agent = "agent"
+   170	    system = "system"
+   171	
+   172	
+   173	class SubscriptionStatus(StrEnum):
+   174	    active = "active"
+   175	    canceled = "canceled"
+   176	    past_due = "past_due"
+   177	    incomplete = "incomplete"
+   178	
+   179	
+   180	class BillingProduct(StrEnum):
+   181	    audit = "audit"
+   182	    sprint = "sprint"
+   183	    autopilot = "autopilot"
+
+exec
+/bin/zsh -lc "nl -ba apps/api/captureos/services/recommendation.py | sed -n '1,260p'" in /Users/anishguntreddi/Documents/hackathon
+ succeeded in 0ms:
+     1	"""Fit recommendation (FR-RC-*): summarize match coverage → a draft pursue/no-pursue."""
+     2	
+     3	from __future__ import annotations
+     4	
+     5	import uuid
+     6	
+     7	from sqlalchemy import select
+     8	
+     9	from captureos.agents.recommendation import FitRecommendationAgent, RecommendationInput
+    10	from captureos.models.enums import FilingStatus, MatchStatus
+    11	from captureos.models.filings import EvidenceMatch, Filing, FilingRequirement, Recommendation
+    12	from captureos.models.opportunities import Opportunity
+    13	from captureos.workflows.engine import StepContext
+    14	
+    15	_MET = (MatchStatus.matched.value, MatchStatus.user_provided.value)
+    16	
+    17	
+    18	async def build_recommendation(ctx: StepContext) -> None:
+    19	    session = ctx.session
+    20	    filing_id = uuid.UUID(str(ctx.params["filing_id"]))
+    21	    filing = (
+    22	        await session.execute(
+    23	            select(Filing).where(Filing.id == filing_id, Filing.org_id == ctx.org_id)
+    24	        )
+    25	    ).scalar_one_or_none()
+    26	    if filing is None:
+    27	        raise ValueError("Filing not found")
+    28	    opp = await session.get(Opportunity, filing.opportunity_id)
+    29	    requirements = (
+    30	        (
+    31	            await session.execute(
+    32	                select(FilingRequirement).where(FilingRequirement.filing_id == filing_id)
+    33	            )
+    34	        )
+    35	        .scalars()
+    36	        .all()
+    37	    )
+    38	    matches = {
+    39	        m.requirement_id: m
+    40	        for m in (
+    41	            await session.execute(select(EvidenceMatch).where(EvidenceMatch.filing_id == filing_id))
+    42	        )
+    43	        .scalars()
+    44	        .all()
+    45	    }
+    46	
+    47	    matched = partial = missing = mandatory_gaps = 0
+    48	    top_gaps: list[str] = []
+    49	    for req in requirements:
+    50	        status = matches[req.id].status if req.id in matches else MatchStatus.missing.value
+    51	        if status in _MET:
+    52	            matched += 1
+    53	        elif status == MatchStatus.partial.value:
+    54	            partial += 1
+    55	        else:
+    56	            missing += 1
+    57	        if status not in _MET:
+    58	            if req.mandatory:
+    59	                mandatory_gaps += 1
+    60	            top_gaps.append(req.text)
+    61	
+    62	    out = await FitRecommendationAgent().run(
+    63	        ctx.agent_context(),
+    64	        RecommendationInput(
+    65	            opportunity_title=opp.title if opp else filing.kind,
+    66	            opportunity_kind=filing.kind,
+    67	            opportunity_fit_score=float(opp.fit_score)
+    68	            if opp and opp.fit_score is not None
+    69	            else None,
+    70	            total_requirements=len(requirements),
+    71	            matched=matched,
+    72	            partial=partial,
+    73	            missing=missing,
+    74	            mandatory_gaps=mandatory_gaps,
+    75	            top_gaps=top_gaps,
+    76	        ),
+    77	    )
+    78	
+    79	    rec = (
+    80	        await session.execute(select(Recommendation).where(Recommendation.filing_id == filing_id))
+    81	    ).scalar_one_or_none()
+    82	    if rec is None:
+    83	        rec = Recommendation(org_id=ctx.org_id, filing_id=filing_id)
+    84	        session.add(rec)
+    85	    rec.decision = out.decision
+    86	    rec.score = out.score
+    87	    rec.rationale = {
+    88	        "for": out.reasons_for,
+    89	        "against": out.reasons_against,
+    90	        "key_gaps": out.key_gaps,
+    91	    }
+    92	    rec.approved = False  # draft until a human approves (FR-RC-3 / FR-AP-1)
+    93	
+    94	    filing.status = FilingStatus.recommended.value
+    95	    await session.flush()
+    96	    ctx.merge_results(decision=out.decision, score=out.score, mandatoryGaps=mandatory_gaps)
+
+exec
+/bin/zsh -lc "nl -ba apps/api/captureos/models/filings.py | sed -n '1,320p'" in /Users/anishguntreddi/Documents/hackathon
+ succeeded in 0ms:
+     1	"""The Filing aggregate and everything that hangs off it (PRD §8, central object)."""
+     2	
+     3	from __future__ import annotations
+     4	
+     5	import uuid
+     6	
+     7	from sqlalchemy import Boolean, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
+     8	from sqlalchemy.dialects.postgresql import JSONB
+     9	from sqlalchemy.dialects.postgresql import UUID as PGUUID
+    10	from sqlalchemy.orm import Mapped, mapped_column, relationship
+    11	
+    12	from captureos.db.base import Base, OrgScopedMixin, TimestampMixin, UUIDPKMixin
+    13	from captureos.models.enums import (
+    14	    ApprovalDecision,
+    15	    ApprovalTarget,
+    16	    FilingStatus,
+    17	    GeneratedDocStatus,
+    18	    GeneratedDocType,
+    19	    MatchStatus,
+    20	    RecommendationDecision,
+    21	    RequirementCategory,
+    22	)
+    23	
+    24	
+    25	class Filing(UUIDPKMixin, OrgScopedMixin, TimestampMixin, Base):
+    26	    __tablename__ = "filings"
+    27	
+    28	    opportunity_id: Mapped[uuid.UUID] = mapped_column(
+    29	        PGUUID(as_uuid=True),
+    30	        ForeignKey("opportunities.id", ondelete="CASCADE"),
+    31	        nullable=False,
+    32	        index=True,
+    33	    )
+    34	    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    35	    status: Mapped[str] = mapped_column(
+    36	        String(32), nullable=False, default=FilingStatus.draft.value, index=True
+    37	    )
+    38	    owner_user_id: Mapped[uuid.UUID | None] = mapped_column(
+    39	        PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    40	    )
+    41	
+    42	    requirements: Mapped[list[FilingRequirement]] = relationship(
+    43	        back_populates="filing", cascade="all, delete-orphan"
+    44	    )
+    45	    evidence_matches: Mapped[list[EvidenceMatch]] = relationship(
+    46	        back_populates="filing", cascade="all, delete-orphan"
+    47	    )
+    48	    recommendation: Mapped[Recommendation | None] = relationship(
+    49	        back_populates="filing", cascade="all, delete-orphan", uselist=False
+    50	    )
+    51	    generated_documents: Mapped[list[GeneratedDocument]] = relationship(
+    52	        back_populates="filing", cascade="all, delete-orphan"
+    53	    )
+    54	    approvals: Mapped[list[Approval]] = relationship(
+    55	        back_populates="filing", cascade="all, delete-orphan"
+    56	    )
+    57	
+    58	
+    59	class FilingRequirement(UUIDPKMixin, OrgScopedMixin, TimestampMixin, Base):
+    60	    __tablename__ = "filing_requirements"
+    61	
+    62	    filing_id: Mapped[uuid.UUID] = mapped_column(
+    63	        PGUUID(as_uuid=True),
+    64	        ForeignKey("filings.id", ondelete="CASCADE"),
+    65	        nullable=False,
+    66	        index=True,
+    67	    )
+    68	    text: Mapped[str] = mapped_column(Text, nullable=False)
+    69	    category: Mapped[str] = mapped_column(
+    70	        String(32), nullable=False, default=RequirementCategory.other.value
+    71	    )
+    72	    mandatory: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    73	    # Citation back to the solicitation (CON-2).
+    74	    source_id: Mapped[uuid.UUID | None] = mapped_column(
+    75	        PGUUID(as_uuid=True), ForeignKey("sources.id", ondelete="SET NULL"), nullable=True
+    76	    )
+    77	    locator: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    78	    # Flagged-for-review when extraction confidence is low / schema-retry exhausted (FR-RE-2).
+    79	    needs_review: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    80	
+    81	    filing: Mapped[Filing] = relationship(back_populates="requirements")
+    82	
+    83	
+    84	class EvidenceMatch(UUIDPKMixin, OrgScopedMixin, TimestampMixin, Base):
+    85	    __tablename__ = "evidence_matches"
+    86	
+    87	    filing_id: Mapped[uuid.UUID] = mapped_column(
+    88	        PGUUID(as_uuid=True),
+    89	        ForeignKey("filings.id", ondelete="CASCADE"),
+    90	        nullable=False,
+    91	        index=True,
+    92	    )
+    93	    requirement_id: Mapped[uuid.UUID] = mapped_column(
+    94	        PGUUID(as_uuid=True),
+    95	        ForeignKey("filing_requirements.id", ondelete="CASCADE"),
+    96	        nullable=False,
+    97	        index=True,
+    98	    )
+    99	    evidence_item_id: Mapped[uuid.UUID | None] = mapped_column(
+   100	        PGUUID(as_uuid=True),
+   101	        ForeignKey("evidence_items.id", ondelete="SET NULL"),
+   102	        nullable=True,
+   103	    )
+   104	    score: Mapped[float] = mapped_column(Numeric(5, 4), nullable=False, default=0)
+   105	    status: Mapped[str] = mapped_column(
+   106	        String(16), nullable=False, default=MatchStatus.missing.value, index=True
+   107	    )
+   108	    rationale: Mapped[str | None] = mapped_column(Text, nullable=True)
+   109	
+   110	    filing: Mapped[Filing] = relationship(back_populates="evidence_matches")
+   111	
+   112	
+   113	class Recommendation(UUIDPKMixin, OrgScopedMixin, TimestampMixin, Base):
+   114	    __tablename__ = "recommendations"
+   115	    # One current recommendation per filing (avoids the PRD's circular FK).
+   116	    __table_args__ = (UniqueConstraint("filing_id"),)
+   117	
+   118	    filing_id: Mapped[uuid.UUID] = mapped_column(
+   119	        PGUUID(as_uuid=True),
+   120	        ForeignKey("filings.id", ondelete="CASCADE"),
+   121	        nullable=False,
+   122	        index=True,
+   123	    )
+   124	    decision: Mapped[str] = mapped_column(
+   125	        String(16), nullable=False, default=RecommendationDecision.do_not_pursue.value
+   126	    )
+   127	    score: Mapped[float] = mapped_column(Numeric(5, 2), nullable=False, default=0)
+   128	    # {for: [...], against: [...], key_gaps: [...]} each item carrying citations (CON-2).
+   129	    rationale: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+   130	    # Draft until a human approves (FR-AP-1 / FR-RC-3).
+   131	    approved: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+   132	
+   133	    filing: Mapped[Filing] = relationship(back_populates="recommendation")
+   134	
+   135	
+   136	class GeneratedDocument(UUIDPKMixin, OrgScopedMixin, TimestampMixin, Base):
+   137	    __tablename__ = "generated_documents"
+   138	    __table_args__ = (UniqueConstraint("filing_id", "type", "version"),)
+   139	
+   140	    filing_id: Mapped[uuid.UUID] = mapped_column(
+   141	        PGUUID(as_uuid=True),
+   142	        ForeignKey("filings.id", ondelete="CASCADE"),
+   143	        nullable=False,
+   144	        index=True,
+   145	    )
+   146	    type: Mapped[str] = mapped_column(
+   147	        String(32), nullable=False, default=GeneratedDocType.narrative.value
+   148	    )
+   149	    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+   150	    content_md: Mapped[str] = mapped_column(Text, nullable=False, default="")
+   151	    export_uri: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+   152	    status: Mapped[str] = mapped_column(
+   153	        String(16), nullable=False, default=GeneratedDocStatus.draft.value
+   154	    )
+   155	    # Citations resolved for this doc; the Audit/Citation agent populates/validates this.
+   156	    citations: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+   157	    # True only after the Audit/Citation check confirms zero unsourced claims (CON-2).
+   158	    citation_validated: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+   159	
+   160	    filing: Mapped[Filing] = relationship(back_populates="generated_documents")
+   161	
+   162	
+   163	class Approval(UUIDPKMixin, OrgScopedMixin, TimestampMixin, Base):
+   164	    __tablename__ = "approvals"
+   165	
+   166	    filing_id: Mapped[uuid.UUID] = mapped_column(
+   167	        PGUUID(as_uuid=True),
+   168	        ForeignKey("filings.id", ondelete="CASCADE"),
+   169	        nullable=False,
+   170	        index=True,
+   171	    )
+   172	    target: Mapped[str] = mapped_column(
+   173	        String(16), nullable=False, default=ApprovalTarget.recommendation.value
+   174	    )
+   175	    approver_user_id: Mapped[uuid.UUID] = mapped_column(
+   176	        PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+   177	    )
+   178	    decision: Mapped[str] = mapped_column(
+   179	        String(16), nullable=False, default=ApprovalDecision.approved.value
+   180	    )
+   181	    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+   182	
+   183	    filing: Mapped[Filing] = relationship(back_populates="approvals")
+
+exec
+/bin/zsh -lc "nl -ba apps/api/captureos/models/evidence.py | sed -n '1,260p'" in /Users/anishguntreddi/Documents/hackathon
+ succeeded in 0ms:
+     1	"""Sources and the Evidence Vault (FR-CB-4, FR-DI-5, CON-2).
+     2	
+     3	A ``Source`` is anything a claim can cite (a fetched URL, a document, user input).
+     4	An ``EvidenceItem`` is an atomic, sourced fact reusable across filings.
+     5	"""
+     6	
+     7	from __future__ import annotations
+     8	
+     9	import uuid
+    10	from datetime import datetime
+    11	
+    12	from sqlalchemy import DateTime, ForeignKey, Numeric, String, Text, func
+    13	from sqlalchemy.dialects.postgresql import UUID as PGUUID
+    14	from sqlalchemy.orm import Mapped, mapped_column
+    15	
+    16	from captureos.db.base import Base, OrgScopedMixin, TimestampMixin, UUIDPKMixin
+    17	from captureos.models.enums import EvidenceOrigin, EvidenceType, SourceKind
+    18	
+    19	
+    20	class Source(UUIDPKMixin, OrgScopedMixin, TimestampMixin, Base):
+    21	    __tablename__ = "sources"
+    22	
+    23	    kind: Mapped[str] = mapped_column(String(32), nullable=False, default=SourceKind.web.value)
+    24	    url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    25	    document_id: Mapped[uuid.UUID | None] = mapped_column(
+    26	        PGUUID(as_uuid=True),
+    27	        ForeignKey("documents.id", ondelete="SET NULL"),
+    28	        nullable=True,
+    29	        index=True,
+    30	    )
+    31	    # Cached content snapshot for auditability (FR-OD-3); a storage URI.
+    32	    snapshot_uri: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    33	    title: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    34	    retrieved_at: Mapped[datetime] = mapped_column(
+    35	        DateTime(timezone=True), nullable=False, server_default=func.now()
+    36	    )
+    37	
+    38	
+    39	class EvidenceItem(UUIDPKMixin, OrgScopedMixin, TimestampMixin, Base):
+    40	    __tablename__ = "evidence_items"
+    41	
+    42	    type: Mapped[str] = mapped_column(String(32), nullable=False, default=EvidenceType.fact.value)
+    43	    content: Mapped[str] = mapped_column(Text, nullable=False)
+    44	    # Every evidence item must trace to a source (CON-2).
+    45	    source_id: Mapped[uuid.UUID] = mapped_column(
+    46	        PGUUID(as_uuid=True),
+    47	        ForeignKey("sources.id", ondelete="CASCADE"),
+    48	        nullable=False,
+    49	        index=True,
+    50	    )
+    51	    origin: Mapped[str] = mapped_column(
+    52	        String(16), nullable=False, default=EvidenceOrigin.inferred.value
+    53	    )
+    54	    confidence: Mapped[float | None] = mapped_column(Numeric(4, 3), nullable=True)
+    55	    # Optional pointer to the chunk this fact was derived from (locator resolution).
+    56	    document_chunk_id: Mapped[uuid.UUID | None] = mapped_column(
+    57	        PGUUID(as_uuid=True),
+    58	        ForeignKey("document_chunks.id", ondelete="SET NULL"),
+    59	        nullable=True,
+    60	        index=True,
+    61	    )
+
+exec
+/bin/zsh -lc "nl -ba apps/api/captureos/services/gaps.py | sed -n '1,260p'" in /Users/anishguntreddi/Documents/hackathon
+ succeeded in 0ms:
+     1	"""Gap resolution (FR-EM-3): a user satisfies a gap by entering a value or attaching a
+     2	document; the affected requirement's match flips to user_provided."""
+     3	
+     4	from __future__ import annotations
+     5	
+     6	import uuid
+     7	
+     8	from sqlalchemy import delete, select
+     9	from sqlalchemy.ext.asyncio import AsyncSession
+    10	
+    11	from captureos.models.documents import Document
+    12	from captureos.models.enums import EvidenceOrigin, EvidenceType, MatchStatus, SourceKind
+    13	from captureos.models.evidence import EvidenceItem, Source
+    14	from captureos.models.filings import EvidenceMatch, Filing, FilingRequirement
+    15	from captureos.workflows.engine import StepContext
+    16	
+    17	
+    18	async def _get_or_create_user_source(session: AsyncSession, org_id: uuid.UUID) -> Source:
+    19	    source = (
+    20	        (
+    21	            await session.execute(
+    22	                select(Source)
+    23	                .where(Source.org_id == org_id, Source.kind == SourceKind.user_input.value)
+    24	                .order_by(Source.created_at)
+    25	            )
+    26	        )
+    27	        .scalars()
+    28	        .first()
+    29	    )
+    30	    if source is None:
+    31	        source = Source(
+    32	            org_id=org_id, kind=SourceKind.user_input.value, title="Owner-provided evidence"
+    33	        )
+    34	        session.add(source)
+    35	        await session.flush()
+    36	    return source
+    37	
+    38	
+    39	async def resolve_gap(ctx: StepContext) -> None:
+    40	    session = ctx.session
+    41	    org_id = ctx.org_id
+    42	    filing_id = uuid.UUID(str(ctx.params["filing_id"]))
+    43	    requirement_id = uuid.UUID(str(ctx.params["requirement_id"]))
+    44	
+    45	    filing = (
+    46	        await session.execute(select(Filing).where(Filing.id == filing_id, Filing.org_id == org_id))
+    47	    ).scalar_one_or_none()
+    48	    if filing is None:
+    49	        raise ValueError("Filing not found")
+    50	    req = (
+    51	        await session.execute(
+    52	            select(FilingRequirement).where(
+    53	                FilingRequirement.id == requirement_id,
+    54	                FilingRequirement.filing_id == filing_id,
+    55	            )
+    56	        )
+    57	    ).scalar_one_or_none()
+    58	    if req is None:
+    59	        raise ValueError("Requirement not found")
+    60	
+    61	    value = ctx.params.get("value")
+    62	    document_id = ctx.params.get("document_id")
+    63	
+    64	    if value:
+    65	        source = await _get_or_create_user_source(session, org_id)
+    66	        evidence = EvidenceItem(
+    67	            org_id=org_id,
+    68	            type=EvidenceType.fact.value,
+    69	            content=str(value)[:1000],
+    70	            source_id=source.id,
+    71	            origin=EvidenceOrigin.user_provided.value,
+    72	        )
+    73	    elif document_id:
+    74	        doc = (
+    75	            await session.execute(
+    76	                select(Document).where(
+    77	                    Document.id == uuid.UUID(str(document_id)), Document.org_id == org_id
+    78	                )
+    79	            )
+    80	        ).scalar_one_or_none()
+    81	        if doc is None:
+    82	            raise ValueError("Document not found")
+    83	        source_id = (
+    84	            (
+    85	                await session.execute(
+    86	                    select(Source.id).where(Source.org_id == org_id, Source.document_id == doc.id)
+    87	                )
+    88	            )
+    89	            .scalars()
+    90	            .first()
+    91	        )
+    92	        evidence = EvidenceItem(
+    93	            org_id=org_id,
+    94	            type=EvidenceType.fact.value,
+    95	            content=f"Document '{doc.filename}' provided to satisfy: {req.text[:300]}",
+    96	            source_id=source_id,
+    97	            origin=EvidenceOrigin.user_provided.value,
+    98	        )
+    99	    else:
+   100	        raise ValueError("Provide either a value or a documentId to resolve the gap")
+   101	
+   102	    session.add(evidence)
+   103	    await session.flush()
+   104	
+   105	    # Re-evaluate the affected requirement: the user asserts this satisfies it (FR-EM-3).
+   106	    await session.execute(
+   107	        delete(EvidenceMatch).where(
+   108	            EvidenceMatch.filing_id == filing_id,
+   109	            EvidenceMatch.requirement_id == requirement_id,
+   110	        )
+   111	    )
+   112	    session.add(
+   113	        EvidenceMatch(
+   114	            org_id=org_id,
+   115	            filing_id=filing_id,
+   116	            requirement_id=requirement_id,
+   117	            evidence_item_id=evidence.id,
+   118	            score=1.0,
+   119	            status=MatchStatus.user_provided.value,
+   120	            rationale="User-provided evidence supplied for this requirement.",
+   121	        )
+   122	    )
+   123	    await session.flush()
+   124	    ctx.merge_results(resolved=True, requirementId=str(requirement_id), status="user_provided")
+
+exec
+/bin/zsh -lc "nl -ba apps/api/captureos/services/compliance.py | sed -n '1,260p'" in /Users/anishguntreddi/Documents/hackathon
+ succeeded in 0ms:
+     1	"""Compliance matrix: the live filing_requirements ⋈ evidence_matches view (FR-EM-4).
+     2	
+     3	Computed on read so it always reflects the current match state. A gap is any row whose status
+     4	is partial or missing."""
+     5	
+     6	from __future__ import annotations
+     7	
+     8	import uuid
+     9	
+    10	from sqlalchemy import select
+    11	from sqlalchemy.ext.asyncio import AsyncSession
+    12	
+    13	from captureos.models.enums import MatchStatus
+    14	from captureos.models.evidence import EvidenceItem
+    15	from captureos.models.filings import EvidenceMatch, FilingRequirement
+    16	
+    17	_GAP_STATUSES = (MatchStatus.partial.value, MatchStatus.missing.value)
+    18	
+    19	
+    20	async def build_compliance_matrix(session: AsyncSession, filing_id: uuid.UUID) -> list[dict]:
+    21	    requirements = (
+    22	        (
+    23	            await session.execute(
+    24	                select(FilingRequirement)
+    25	                .where(FilingRequirement.filing_id == filing_id)
+    26	                .order_by(FilingRequirement.category, FilingRequirement.created_at)
+    27	            )
+    28	        )
+    29	        .scalars()
+    30	        .all()
+    31	    )
+    32	    matches = {
+    33	        m.requirement_id: m
+    34	        for m in (
+    35	            await session.execute(select(EvidenceMatch).where(EvidenceMatch.filing_id == filing_id))
+    36	        )
+    37	        .scalars()
+    38	        .all()
+    39	    }
+    40	    evidence_ids = [m.evidence_item_id for m in matches.values() if m.evidence_item_id]
+    41	    evidence = {}
+    42	    if evidence_ids:
+    43	        evidence = {
+    44	            e.id: e
+    45	            for e in (
+    46	                await session.execute(select(EvidenceItem).where(EvidenceItem.id.in_(evidence_ids)))
+    47	            )
+    48	            .scalars()
+    49	            .all()
+    50	        }
+    51	
+    52	    rows: list[dict] = []
+    53	    for req in requirements:
+    54	        match = matches.get(req.id)
+    55	        status = match.status if match else MatchStatus.missing.value
+    56	        ev = evidence.get(match.evidence_item_id) if match and match.evidence_item_id else None
+    57	        rows.append(
+    58	            {
+    59	                "requirement_id": req.id,
+    60	                "requirement": req.text,
+    61	                "category": req.category,
+    62	                "mandatory": req.mandatory,
+    63	                "locator": req.locator,
+    64	                "source_id": req.source_id,
+    65	                "status": status,
+    66	                "score": float(match.score) if match else 0.0,
+    67	                "evidence": ev.content if ev else None,
+    68	                "evidence_item_id": ev.id if ev else None,
+    69	                "rationale": match.rationale if match else None,
+    70	            }
+    71	        )
+    72	    return rows
+    73	
+    74	
+    75	def gap_rows(matrix: list[dict]) -> list[dict]:
+    76	    return [r for r in matrix if r["status"] in _GAP_STATUSES]
+    77	
+    78	
+    79	def match_summary(matrix: list[dict]) -> dict[str, int]:
+    80	    summary = {"matched": 0, "partial": 0, "missing": 0, "user_provided": 0}
+    81	    for row in matrix:
+    82	        summary[row["status"]] = summary.get(row["status"], 0) + 1
+    83	    return summary
+
+exec
+/bin/zsh -lc "nl -ba apps/api/captureos/services/approvals.py | sed -n '1,260p'" in /Users/anishguntreddi/Documents/hackathon
+exec
+/bin/zsh -lc "nl -ba apps/api/captureos/api/filings.py | sed -n '1,360p'" in /Users/anishguntreddi/Documents/hackathon
+ succeeded in 0ms:
+     1	"""Human approval gate (FR-AP-1/2/3). Records the approval and advances (or returns) the
+     2	filing state machine. A recommendation is only 'pursue'-actionable once approved (CON-1 spirit)."""
+     3	
+     4	from __future__ import annotations
+     5	
+     6	import uuid
+     7	
+     8	from sqlalchemy import select
+     9	from sqlalchemy.ext.asyncio import AsyncSession
+    10	
+    11	from captureos.models.enums import ApprovalDecision, ApprovalTarget, FilingStatus
+    12	from captureos.models.filings import Approval, Filing, Recommendation
+    13	
+    14	
+    15	async def record_approval(
+    16	    session: AsyncSession,
+    17	    org_id: uuid.UUID,
+    18	    filing: Filing,
+    19	    *,
+    20	    target: str,
+    21	    decision: str,
+    22	    approver_user_id: uuid.UUID,
+    23	    notes: str | None = None,
+    24	) -> Filing:
+    25	    session.add(
+    26	        Approval(
+    27	            org_id=org_id,
+    28	            filing_id=filing.id,
+    29	            target=target,
+    30	            approver_user_id=approver_user_id,
+    31	            decision=decision,
+    32	            notes=notes,
+    33	        )
+    34	    )
+    35	    approved = decision == ApprovalDecision.approved.value
+    36	
+    37	    if target == ApprovalTarget.recommendation.value:
+    38	        rec = (
+    39	            await session.execute(
+    40	                select(Recommendation).where(Recommendation.filing_id == filing.id)
+    41	            )
+    42	        ).scalar_one_or_none()
+    43	        if rec is not None:
+    44	            rec.approved = approved
+    45	        # Approved → ready to package (FR-AP-1). Rejected → back to editable (FR-AP-3).
+    46	        filing.status = FilingStatus.approved.value if approved else FilingStatus.recommended.value
+    47	    elif target == ApprovalTarget.package.value:
+    48	        # Package export gate (FR-AP-2 / CON-1); M5 builds the package itself.
+    49	        filing.status = FilingStatus.ready.value if approved else FilingStatus.package_review.value
+    50	
+    51	    await session.flush()
+    52	    return filing
+
+ succeeded in 0ms:
+     1	"""Filing routes (PRD §9.5): create, list, the action sub-paths, and the full aggregate.
+     2	
+     3	Actions use slash sub-paths (e.g. ``/{filing_id}/extract-requirements``) rather than the PRD's
+     4	colon-suffix style: uvicorn's HTTP parser mangles a ``:`` inside a path segment for some action
+     5	names, so the colon form is unreliable in production (see tests/test_routes.py)."""
+     6	
+     7	from __future__ import annotations
+     8	
+     9	import uuid
+    10	
+    11	from fastapi import APIRouter, BackgroundTasks, status
+    12	from sqlalchemy import select
+    13	
+    14	from captureos.audit import record_event
+    15	from captureos.core.deps import OrgEditor, OrgViewer, SessionDep
+    16	from captureos.core.errors import NotFoundError, ValidationFailed
+    17	from captureos.models.enums import ActorType, ApprovalDecision, ApprovalTarget, WorkflowType
+    18	from captureos.models.filings import Approval, Filing, FilingRequirement, Recommendation
+    19	from captureos.models.opportunities import Opportunity
+    20	from captureos.models.workflow import WorkflowRun
+    21	from captureos.schemas.filing import (
+    22	    ApprovalRequest,
+    23	    ApprovalResponse,
+    24	    ComplianceRow,
+    25	    FilingAggregate,
+    26	    FilingCreate,
+    27	    FilingResponse,
+    28	    GapResolveRequest,
+    29	    RecommendationResponse,
+    30	    RequirementResponse,
+    31	)
+    32	from captureos.schemas.opportunity import OpportunitySummary
+    33	from captureos.schemas.workflow import WorkflowRunCreated
+    34	from captureos.services.approvals import record_approval
+    35	from captureos.services.compliance import build_compliance_matrix, gap_rows, match_summary
+    36	from captureos.services.filings import create_filing
+    37	from captureos.workflows.dispatch import dispatch_run
+    38	
+    39	router = APIRouter(prefix="/orgs/{org_id}/filings", tags=["filings"])
+    40	
+    41	_VALID_DECISIONS = {ApprovalDecision.approved.value, ApprovalDecision.rejected.value}
+    42	_VALID_TARGETS = {ApprovalTarget.recommendation.value, ApprovalTarget.package.value}
+    43	
+    44	
+    45	def _filing_response(filing: Filing) -> FilingResponse:
+    46	    return FilingResponse(
+    47	        id=filing.id,
+    48	        opportunity_id=filing.opportunity_id,
+    49	        kind=filing.kind,
+    50	        status=filing.status,
+    51	        owner_user_id=filing.owner_user_id,
+    52	        created_at=filing.created_at,
+    53	    )
+    54	
+    55	
+    56	async def _get_filing_or_404(
+    57	    session: SessionDep, org_id: uuid.UUID, filing_id: uuid.UUID
+    58	) -> Filing:
+    59	    filing = (
+    60	        await session.execute(select(Filing).where(Filing.id == filing_id, Filing.org_id == org_id))
+    61	    ).scalar_one_or_none()
+    62	    if filing is None:
+    63	        raise NotFoundError("Filing not found")
+    64	    return filing
+    65	
+    66	
+    67	async def _dispatch(
+    68	    ctx: OrgEditor,
+    69	    session: SessionDep,
+    70	    background_tasks: BackgroundTasks,
+    71	    filing: Filing,
+    72	    wtype: str,
+    73	    params: dict,
+    74	) -> WorkflowRunCreated:
+    75	    run = WorkflowRun(
+    76	        org_id=ctx.org_id,
+    77	        filing_id=filing.id,
+    78	        type=wtype,
+    79	        status="queued",
+    80	        input_params={"filing_id": str(filing.id), **params},
+    81	    )
+    82	    session.add(run)
+    83	    await session.flush()
+    84	    await dispatch_run(session, background_tasks, run)
+    85	    return WorkflowRunCreated(workflow_run_id=run.id)
+    86	
+    87	
+    88	@router.post("", response_model=FilingResponse, status_code=status.HTTP_201_CREATED)
+    89	async def create(body: FilingCreate, ctx: OrgEditor, session: SessionDep) -> FilingResponse:
+    90	    filing = await create_filing(session, ctx.org_id, body.opportunity_id, ctx.user.id)
+    91	    await record_event(
+    92	        "filing.created",
+    93	        org_id=ctx.org_id,
+    94	        filing_id=filing.id,
+    95	        actor=ActorType.user,
+    96	        actor_id=str(ctx.user.id),
+    97	        payload={"opportunity_id": str(body.opportunity_id)},
+    98	    )
+    99	    return _filing_response(filing)
+   100	
+   101	
+   102	@router.get("", response_model=list[FilingResponse])
+   103	async def list_filings(ctx: OrgViewer, session: SessionDep) -> list[FilingResponse]:
+   104	    filings = (
+   105	        (
+   106	            await session.execute(
+   107	                select(Filing).where(Filing.org_id == ctx.org_id).order_by(Filing.created_at.desc())
+   108	            )
+   109	        )
+   110	        .scalars()
+   111	        .all()
+   112	    )
+   113	    return [_filing_response(f) for f in filings]
+   114	
+   115	
+   116	@router.post(
+   117	    "/{filing_id}/extract-requirements",
+   118	    response_model=WorkflowRunCreated,
+   119	    status_code=status.HTTP_202_ACCEPTED,
+   120	)
+   121	async def extract_requirements(
+   122	    ctx: OrgEditor, session: SessionDep, background_tasks: BackgroundTasks, filing_id: uuid.UUID
+   123	) -> WorkflowRunCreated:
+   124	    filing = await _get_filing_or_404(session, ctx.org_id, filing_id)
+   125	    return await _dispatch(
+   126	        ctx, session, background_tasks, filing, WorkflowType.requirement_extraction.value, {}
+   127	    )
+   128	
+   129	
+   130	@router.post(
+   131	    "/{filing_id}/match-evidence",
+   132	    response_model=WorkflowRunCreated,
+   133	    status_code=status.HTTP_202_ACCEPTED,
+   134	)
+   135	async def match_evidence(
+   136	    ctx: OrgEditor, session: SessionDep, background_tasks: BackgroundTasks, filing_id: uuid.UUID
+   137	) -> WorkflowRunCreated:
+   138	    filing = await _get_filing_or_404(session, ctx.org_id, filing_id)
+   139	    return await _dispatch(
+   140	        ctx, session, background_tasks, filing, WorkflowType.evidence_match.value, {}
+   141	    )
+   142	
+   143	
+   144	@router.post(
+   145	    "/{filing_id}/recommend",
+   146	    response_model=WorkflowRunCreated,
+   147	    status_code=status.HTTP_202_ACCEPTED,
+   148	)
+   149	async def recommend(
+   150	    ctx: OrgEditor, session: SessionDep, background_tasks: BackgroundTasks, filing_id: uuid.UUID
+   151	) -> WorkflowRunCreated:
+   152	    filing = await _get_filing_or_404(session, ctx.org_id, filing_id)
+   153	    return await _dispatch(
+   154	        ctx, session, background_tasks, filing, WorkflowType.recommendation.value, {}
+   155	    )
+   156	
+   157	
+   158	@router.post(
+   159	    "/{filing_id}/gaps/{requirement_id}/resolve",
+   160	    response_model=WorkflowRunCreated,
+   161	    status_code=status.HTTP_202_ACCEPTED,
+   162	)
+   163	async def resolve_gap(
+   164	    body: GapResolveRequest,
+   165	    ctx: OrgEditor,
+   166	    session: SessionDep,
+   167	    background_tasks: BackgroundTasks,
+   168	    filing_id: uuid.UUID,
+   169	    requirement_id: uuid.UUID,
+   170	) -> WorkflowRunCreated:
+   171	    if not body.value and not body.document_id:
+   172	        raise ValidationFailed("Provide a value or a documentId to resolve the gap")
+   173	    filing = await _get_filing_or_404(session, ctx.org_id, filing_id)
+   174	    params: dict = {"requirement_id": str(requirement_id)}
+   175	    if body.value:
+   176	        params["value"] = body.value
+   177	    if body.document_id:
+   178	        params["document_id"] = str(body.document_id)
+   179	    return await _dispatch(
+   180	        ctx, session, background_tasks, filing, WorkflowType.gap_resolution.value, params
+   181	    )
+   182	
+   183	
+   184	@router.post("/{filing_id}/approvals", response_model=FilingResponse)
+   185	async def approve(
+   186	    body: ApprovalRequest, ctx: OrgEditor, session: SessionDep, filing_id: uuid.UUID
+   187	) -> FilingResponse:
+   188	    if body.decision not in _VALID_DECISIONS:
+   189	        raise ValidationFailed(f"decision must be one of {sorted(_VALID_DECISIONS)}")
+   190	    if body.target not in _VALID_TARGETS:
+   191	        raise ValidationFailed(f"target must be one of {sorted(_VALID_TARGETS)}")
+   192	    filing = await _get_filing_or_404(session, ctx.org_id, filing_id)
+   193	    filing = await record_approval(
+   194	        session,
+   195	        ctx.org_id,
+   196	        filing,
+   197	        target=body.target,
+   198	        decision=body.decision,
+   199	        approver_user_id=ctx.user.id,
+   200	        notes=body.notes,
+   201	    )
+   202	    await record_event(
+   203	        "filing.approval",
+   204	        org_id=ctx.org_id,
+   205	        filing_id=filing.id,
+   206	        actor=ActorType.user,
+   207	        actor_id=str(ctx.user.id),
+   208	        payload={"target": body.target, "decision": body.decision},
+   209	    )
+   210	    return _filing_response(filing)
+   211	
+   212	
+   213	@router.get("/{filing_id}", response_model=FilingAggregate)
+   214	async def get_filing(ctx: OrgViewer, session: SessionDep, filing_id: uuid.UUID) -> FilingAggregate:
+   215	    filing = await _get_filing_or_404(session, ctx.org_id, filing_id)
+   216	    opp = await session.get(Opportunity, filing.opportunity_id)
+   217	    requirements = (
+   218	        (
+   219	            await session.execute(
+   220	                select(FilingRequirement)
+   221	                .where(FilingRequirement.filing_id == filing_id)
+   222	                .order_by(FilingRequirement.category, FilingRequirement.created_at)
+   223	            )
+   224	        )
+   225	        .scalars()
+   226	        .all()
+   227	    )
+   228	
+   229	    matrix = await build_compliance_matrix(session, filing_id)
+   230	    compliance = [ComplianceRow(**row) for row in matrix]
+   231	    gaps = [ComplianceRow(**row) for row in gap_rows(matrix)]
+   232	
+   233	    rec = (
+   234	        await session.execute(select(Recommendation).where(Recommendation.filing_id == filing_id))
+   235	    ).scalar_one_or_none()
+   236	    approvals = (
+   237	        (
+   238	            await session.execute(
+   239	                select(Approval)
+   240	                .where(Approval.filing_id == filing_id)
+   241	                .order_by(Approval.created_at)
+   242	            )
+   243	        )
+   244	        .scalars()
+   245	        .all()
+   246	    )
+   247	
+   248	    opp_summary = (
+   249	        OpportunitySummary(
+   250	            id=opp.id,
+   251	            kind=opp.kind,
+   252	            title=opp.title,
+   253	            sponsor=opp.sponsor,
+   254	            deadline=opp.deadline,
+   255	            fit_score=float(opp.fit_score) if opp.fit_score is not None else None,
+   256	            decision_hint=opp.decision_hint,
+   257	            source_url=opp.details.get("source_url"),
+   258	        )
+   259	        if opp is not None
+   260	        else None
+   261	    )
+   262	    return FilingAggregate(
+   263	        filing=_filing_response(filing),
+   264	        opportunity=opp_summary,
+   265	        requirements=[
+   266	            RequirementResponse(
+   267	                id=r.id,
+   268	                text=r.text,
+   269	                category=r.category,
+   270	                mandatory=r.mandatory,
+   271	                locator=r.locator,
+   272	                needs_review=r.needs_review,
+   273	                source_id=r.source_id,
+   274	            )
+   275	            for r in requirements
+   276	        ],
+   277	        requirement_count=len(requirements),
+   278	        status=filing.status,
+   279	        compliance_matrix=compliance,
+   280	        gap_list=gaps,
+   281	        match_summary=match_summary(matrix),
+   282	        recommendation=(
+   283	            RecommendationResponse(
+   284	                decision=rec.decision,
+   285	                score=float(rec.score) if rec.score is not None else None,
+   286	                rationale=rec.rationale,
+   287	                approved=rec.approved,
+   288	            )
+   289	            if rec is not None
+   290	            else None
+   291	        ),
+   292	        approvals=[
+   293	            ApprovalResponse(
+   294	                target=a.target, decision=a.decision, notes=a.notes, created_at=a.created_at
+   295	            )
+   296	            for a in approvals
+   297	        ],
+   298	    )
+
+exec
+/bin/zsh -lc "nl -ba apps/api/captureos/agents/matching.py | sed -n '1,320p'" in /Users/anishguntreddi/Documents/hackathon
+exec
+/bin/zsh -lc "nl -ba apps/api/captureos/ingestion/retrieval.py | sed -n '1,260p'" in /Users/anishguntreddi/Documents/hackathon
+ succeeded in 0ms:
+     1	"""Evidence Mapping agent (PRD agent #7, FR-EM-1). Scores how well candidate evidence
+     2	satisfies a requirement and returns a status + the best candidate.
+     3	
+     4	Mock = keyword overlap on significant terms (deterministic, meaningful offline). Conservative:
+     5	weak matches degrade to ``partial`` rather than ``matched`` (PRD §10.2)."""
+     6	
+     7	from __future__ import annotations
+     8	
+     9	import re
+    10	
+    11	from pydantic import BaseModel, Field
+    12	
+    13	from captureos.agents.base import Agent, AgentContext
+    14	from captureos.providers import ModelTier
+    15	
+    16	_STOPWORDS = {
+    17	    "the",
+    18	    "a",
+    19	    "an",
+    20	    "and",
+    21	    "or",
+    22	    "of",
+    23	    "to",
+    24	    "in",
+    25	    "for",
+    26	    "be",
+    27	    "is",
+    28	    "are",
+    29	    "with",
+    30	    "must",
+    31	    "shall",
+    32	    "will",
+    33	    "provide",
+    34	    "submit",
+    35	    "that",
+    36	    "this",
+    37	    "by",
+    38	    "on",
+    39	    "at",
+    40	    "as",
+    41	    "required",
+    42	    "offerors",
+    43	    "applicants",
+    44	    "offeror",
+    45	    "applicant",
+    46	    "contractor",
+    47	    "their",
+    48	    "they",
+    49	    "have",
+    50	    "has",
+    51	    "not",
+    52	    "no",
+    53	    "any",
+    54	    "all",
+    55	    "from",
+    56	    "which",
+    57	    "must-satisfy",
+    58	    "section",
+    59	}
+    60	
+    61	
+    62	def _significant_words(text: str) -> set[str]:
+    63	    return {
+    64	        w for w in re.findall(r"[a-z0-9()]+", text.lower()) if len(w) > 3 and w not in _STOPWORDS
+    65	    }
+    66	
+    67	
+    68	class EvidenceCandidate(BaseModel):
+    69	    ref: str
+    70	    content: str
+    71	
+    72	
+    73	class EvidenceMatchInput(BaseModel):
+    74	    requirement_text: str
+    75	    requirement_category: str = "other"
+    76	    candidates: list[EvidenceCandidate] = Field(default_factory=list)
+    77	
+    78	
+    79	class EvidenceMatchOutput(BaseModel):
+    80	    status: str  # matched / partial / missing
+    81	    score: float  # 0-1 match strength
+    82	    best_ref: str | None = None
+    83	    rationale: str = ""
+    84	
+    85	
+    86	class EvidenceMappingAgent(Agent[EvidenceMatchInput, EvidenceMatchOutput]):
+    87	    name = "evidence_mapping"
+    88	    tier = ModelTier.pro
+    89	    output_model = EvidenceMatchOutput
+    90	    system_prompt = (
+    91	        "You map a solicitation requirement to the company's evidence. Decide matched/partial/"
+    92	        "missing with a 0-1 score and cite the single best evidence ref. Be conservative: weak "
+    93	        "or tangential evidence is 'partial', not 'matched'. JSON only."
+    94	    )
+    95	
+    96	    def build_prompt(self, data: EvidenceMatchInput) -> str:
+    97	        candidates = (
+    98	            "\n".join(f"- [{c.ref}] {c.content[:300]}" for c in data.candidates) or "(none)"
+    99	        )
+   100	        return (
+   101	            f"Requirement ({data.requirement_category}): {data.requirement_text}\n\n"
+   102	            f"Candidate evidence:\n{candidates}\n\n"
+   103	            "Return status, score (0-1), best_ref (the matching evidence ref or null), rationale."
+   104	        )
+   105	
+   106	    async def mock_output(self, ctx: AgentContext, data: EvidenceMatchInput) -> EvidenceMatchOutput:
+   107	        req_words = _significant_words(data.requirement_text)
+   108	        if not req_words:
+   109	            return EvidenceMatchOutput(
+   110	                status="missing", score=0.0, rationale="Requirement has no scoreable terms."
+   111	            )
+   112	
+   113	        best_ref: str | None = None
+   114	        best_score = 0.0
+   115	        for candidate in data.candidates:
+   116	            cand_words = _significant_words(candidate.content)
+   117	            if not cand_words:
+   118	                continue
+   119	            overlap = len(req_words & cand_words) / len(req_words)
+   120	            if overlap > best_score:
+   121	                best_score = overlap
+   122	                best_ref = candidate.ref
+   123	
+   124	        if best_score >= 0.45:
+   125	            status = "matched"
+   126	        elif best_score >= 0.2:
+   127	            status = "partial"
+   128	        else:
+   129	            status = "missing"
+   130	            best_ref = None
+   131	
+   132	        rationale = (
+   133	            f"Best evidence covers {round(best_score * 100)}% of the requirement's key terms."
+   134	            if best_ref
+   135	            else "No evidence in the vault addresses this requirement."
+   136	        )
+   137	        return EvidenceMatchOutput(
+   138	            status=status, score=round(best_score, 3), best_ref=best_ref, rationale=rationale
+   139	        )
+
+ succeeded in 0ms:
+     1	"""pgvector RAG retrieval over an org's document chunks (FR-DI-5, FR-EM-1).
+     2	
+     3	Returns chunks with their cosine distance so citations resolve to a document + locator.
+     4	Real-semantic when EMBEDDINGS_PROVIDER=gemini; deterministic (but non-semantic) with the
+     5	mock provider — which is why evidence *scoring* uses keyword overlap, not vector distance."""
+     6	
+     7	from __future__ import annotations
+     8	
+     9	import uuid
+    10	
+    11	from sqlalchemy import select
+    12	from sqlalchemy.ext.asyncio import AsyncSession
+    13	
+    14	from captureos.models.documents import DocumentChunk
+    15	from captureos.providers import get_embeddings
+    16	
+    17	
+    18	async def retrieve_relevant_chunks(
+    19	    session: AsyncSession, org_id: uuid.UUID, query_text: str, *, k: int = 5
+    20	) -> list[tuple[DocumentChunk, float]]:
+    21	    if not query_text.strip():
+    22	        return []
+    23	    embedding = await get_embeddings().embed([query_text])
+    24	    query_vec = embedding.vectors[0]
+    25	    distance = DocumentChunk.embedding.cosine_distance(query_vec)
+    26	    stmt = (
+    27	        select(DocumentChunk, distance.label("distance"))
+    28	        .where(DocumentChunk.org_id == org_id, DocumentChunk.embedding.is_not(None))
+    29	        .order_by(distance)
+    30	        .limit(k)
+    31	    )
+    32	    rows = (await session.execute(stmt)).all()
+    33	    return [(row[0], float(row[1])) for row in rows]
+
+exec
+/bin/zsh -lc "nl -ba apps/api/captureos/core/deps.py | sed -n '1,260p'" in /Users/anishguntreddi/Documents/hackathon
+ succeeded in 0ms:
+     1	"""Request dependencies: authentication, org resolution, and role enforcement (CON-5, NFR-1)."""
+     2	
+     3	from __future__ import annotations
+     4	
+     5	import uuid
+     6	from collections.abc import Awaitable, Callable
+     7	from dataclasses import dataclass
+     8	from typing import Annotated
+     9	
+    10	from fastapi import Depends, Path
+    11	from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+    12	from sqlalchemy import select
+    13	from sqlalchemy.ext.asyncio import AsyncSession
+    14	
+    15	from captureos.auth import get_auth_provider
+    16	from captureos.core.errors import AuthError, ForbiddenError, NotFoundError
+    17	from captureos.db.session import get_session
+    18	from captureos.models.enums import OrgRole
+    19	from captureos.models.org import Organization, OrgMember, User
+    20	
+    21	bearer_scheme = HTTPBearer(auto_error=False)
+    22	
+    23	SessionDep = Annotated[AsyncSession, Depends(get_session)]
+    24	BearerDep = Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)]
+    25	
+    26	_ROLE_ORDER = {OrgRole.viewer: 0, OrgRole.editor: 1, OrgRole.owner: 2}
+    27	
+    28	
+    29	async def get_current_user(session: SessionDep, creds: BearerDep = None) -> User:
+    30	    if creds is None or not creds.credentials:
+    31	        raise AuthError("Missing or malformed Authorization header")
+    32	    principal = await get_auth_provider().verify_token(creds.credentials)
+    33	
+    34	    if principal.is_local:
+    35	        try:
+    36	            user_id = uuid.UUID(principal.subject)
+    37	        except ValueError as exc:
+    38	            raise AuthError("Invalid token subject") from exc
+    39	        user = await session.get(User, user_id)
+    40	    else:
+    41	        result = await session.execute(
+    42	            select(User).where(User.external_auth_id == principal.subject)
+    43	        )
+    44	        user = result.scalar_one_or_none()
+    45	        if user is None and principal.email:
+    46	            user = User(email=principal.email, external_auth_id=principal.subject)
+    47	            session.add(user)
+    48	            await session.flush()
+    49	
+    50	    if user is None or not user.is_active:
+    51	        raise AuthError("User not found or inactive")
+    52	    return user
+    53	
+    54	
+    55	CurrentUser = Annotated[User, Depends(get_current_user)]
+    56	
+    57	
+    58	@dataclass(slots=True)
+    59	class OrgContext:
+    60	    user: User
+    61	    organization: Organization
+    62	    membership: OrgMember
+    63	
+    64	    @property
+    65	    def role(self) -> str:
+    66	        return self.membership.role
+    67	
+    68	    @property
+    69	    def org_id(self) -> uuid.UUID:
+    70	        return self.organization.id
+    71	
+    72	
+    73	async def _load_org_context(org_id: uuid.UUID, user: User, session: AsyncSession) -> OrgContext:
+    74	    org = await session.get(Organization, org_id)
+    75	    # Non-existent OR not-a-member both return 404 to avoid leaking org existence (CON-5).
+    76	    if org is None:
+    77	        raise NotFoundError("Organization not found")
+    78	    result = await session.execute(
+    79	        select(OrgMember).where(OrgMember.org_id == org_id, OrgMember.user_id == user.id)
+    80	    )
+    81	    membership = result.scalar_one_or_none()
+    82	    if membership is None:
+    83	        raise NotFoundError("Organization not found")
+    84	    return OrgContext(user=user, organization=org, membership=membership)
+    85	
+    86	
+    87	def require_org(
+    88	    min_role: OrgRole = OrgRole.viewer,
+    89	) -> Callable[..., Awaitable[OrgContext]]:
+    90	    """Dependency factory: resolves the org from the path, asserts membership and a
+    91	    minimum role, and returns the OrgContext. Use on every org-scoped route."""
+    92	
+    93	    async def dependency(
+    94	        user: CurrentUser,
+    95	        session: SessionDep,
+    96	        org_id: Annotated[uuid.UUID, Path()],
+    97	    ) -> OrgContext:
+    98	        ctx = await _load_org_context(org_id, user, session)
+    99	        if _ROLE_ORDER[OrgRole(ctx.membership.role)] < _ROLE_ORDER[min_role]:
+   100	            raise ForbiddenError(f"This action requires '{min_role.value}' role")
+   101	        return ctx
+   102	
+   103	    return dependency
+   104	
+   105	
+   106	# Common pre-bound dependencies.
+   107	OrgViewer = Annotated[OrgContext, Depends(require_org(OrgRole.viewer))]
+   108	OrgEditor = Annotated[OrgContext, Depends(require_org(OrgRole.editor))]
+   109	OrgOwner = Annotated[OrgContext, Depends(require_org(OrgRole.owner))]
+
+exec
+/bin/zsh -lc "nl -ba apps/api/captureos/workflows/pipelines.py | sed -n '1,260p'" in /Users/anishguntreddi/Documents/hackathon
+exec
+/bin/zsh -lc "nl -ba apps/api/captureos/services/filings.py | sed -n '1,220p'" in /Users/anishguntreddi/Documents/hackathon
+ succeeded in 0ms:
+     1	"""Pipeline registry: maps a workflow type to its ordered steps. Steps in a pipeline
+     2	share local state via closures (avoids leaking working data into client-visible results)."""
+     3	
+     4	from __future__ import annotations
+     5	
+     6	from captureos.models.enums import WorkflowType
+     7	from captureos.models.workflow import WorkflowRun
+     8	from captureos.services.company_brain import gather_company_sources, run_company_brain
+     9	from captureos.services.documents import run_document_ingest
+    10	from captureos.services.evidence import acquire_evidence, map_evidence
+    11	from captureos.services.filings import run_requirement_extraction
+    12	from captureos.services.gaps import resolve_gap
+    13	from captureos.services.recommendation import build_recommendation
+    14	from captureos.services.scan import (
+    15	    discover_opportunities,
+    16	    research_top_opportunities,
+    17	    score_opportunities,
+    18	)
+    19	from captureos.workflows.engine import StepContext, StepFn
+    20	
+    21	# Time-saved heuristic per workflow type, in minutes (FR-AU-3). Tunable.
+    22	TIME_SAVED: dict[str, int] = {
+    23	    WorkflowType.company_brain.value: 60,
+    24	    WorkflowType.document_ingest.value: 10,
+    25	    WorkflowType.opportunity_scan.value: 120,
+    26	    WorkflowType.requirement_extraction.value: 45,
+    27	    WorkflowType.evidence_match.value: 90,
+    28	    WorkflowType.recommendation.value: 30,
+    29	    WorkflowType.gap_resolution.value: 15,
+    30	}
+    31	
+    32	
+    33	def _company_brain_pipeline(run: WorkflowRun) -> list[tuple[str, StepFn]]:
+    34	    state: dict = {}
+    35	
+    36	    async def gather(ctx: StepContext) -> None:
+    37	        state.update(await gather_company_sources(ctx))
+    38	
+    39	    async def build(ctx: StepContext) -> None:
+    40	        await run_company_brain(ctx, state)
+    41	
+    42	    return [("gather_sources", gather), ("build_profile", build)]
+    43	
+    44	
+    45	def _document_ingest_pipeline(run: WorkflowRun) -> list[tuple[str, StepFn]]:
+    46	    return [("ingest", run_document_ingest)]
+    47	
+    48	
+    49	def _opportunity_scan_pipeline(run: WorkflowRun) -> list[tuple[str, StepFn]]:
+    50	    state: dict = {}
+    51	
+    52	    async def discover(ctx: StepContext) -> None:
+    53	        state.update(await discover_opportunities(ctx))
+    54	
+    55	    async def research(ctx: StepContext) -> None:
+    56	        await research_top_opportunities(ctx, state)
+    57	
+    58	    async def score(ctx: StepContext) -> None:
+    59	        await score_opportunities(ctx, state)
+    60	
+    61	    return [
+    62	        ("source_discovery", discover),
+    63	        ("opportunity_research", research),
+    64	        ("fit_scoring", score),
+    65	    ]
+    66	
+    67	
+    68	def _requirement_extraction_pipeline(run: WorkflowRun) -> list[tuple[str, StepFn]]:
+    69	    return [("extract_requirements", run_requirement_extraction)]
+    70	
+    71	
+    72	def _evidence_match_pipeline(run: WorkflowRun) -> list[tuple[str, StepFn]]:
+    73	    return [("evidence_acquisition", acquire_evidence), ("evidence_mapping", map_evidence)]
+    74	
+    75	
+    76	def _recommendation_pipeline(run: WorkflowRun) -> list[tuple[str, StepFn]]:
+    77	    return [("fit_recommendation", build_recommendation)]
+    78	
+    79	
+    80	def _gap_resolution_pipeline(run: WorkflowRun) -> list[tuple[str, StepFn]]:
+    81	    return [("resolve_gap", resolve_gap)]
+    82	
+    83	
+    84	_PIPELINES = {
+    85	    WorkflowType.company_brain.value: _company_brain_pipeline,
+    86	    WorkflowType.document_ingest.value: _document_ingest_pipeline,
+    87	    WorkflowType.opportunity_scan.value: _opportunity_scan_pipeline,
+    88	    WorkflowType.requirement_extraction.value: _requirement_extraction_pipeline,
+    89	    WorkflowType.evidence_match.value: _evidence_match_pipeline,
+    90	    WorkflowType.recommendation.value: _recommendation_pipeline,
+    91	    WorkflowType.gap_resolution.value: _gap_resolution_pipeline,
+    92	}
+    93	
+    94	
+    95	def build_steps(run: WorkflowRun) -> list[tuple[str, StepFn]]:
+    96	    builder = _PIPELINES.get(run.type)
+    97	    if builder is None:
+    98	        raise ValueError(f"No pipeline registered for workflow type {run.type!r}")
+    99	    return builder(run)
+
+ succeeded in 0ms:
+     1	"""Filing creation + requirement extraction (FR-RE-*).
+     2	
+     3	A Filing is the pursuit of one opportunity. Requirement extraction reads the opportunity's
+     4	solicitation snapshot, runs the extraction agent, and persists deduplicated, source-located
+     5	``filing_requirements`` (FR-RE-1/3). No text → NeedsInput (flagged, not silent — FR-RE-2)."""
+     6	
+     7	from __future__ import annotations
+     8	
+     9	import re
+    10	import uuid
+    11	
+    12	from sqlalchemy import select
+    13	from sqlalchemy.ext.asyncio import AsyncSession
+    14	
+    15	from captureos.agents.requirements import RequirementExtractionAgent, RequirementExtractionInput
+    16	from captureos.core.errors import NotFoundError
+    17	from captureos.models.enums import FilingStatus
+    18	from captureos.models.filings import Filing, FilingRequirement
+    19	from captureos.models.opportunities import Opportunity
+    20	from captureos.workflows.engine import NeedsInput, StepContext
+    21	
+    22	
+    23	def _norm_key(text: str) -> str:
+    24	    return re.sub(r"\s+", " ", text.lower()).strip(" .;:")[:80]
+    25	
+    26	
+    27	async def create_filing(
+    28	    session: AsyncSession, org_id: uuid.UUID, opportunity_id: uuid.UUID, user_id: uuid.UUID
+    29	) -> Filing:
+    30	    opp = (
+    31	        await session.execute(
+    32	            select(Opportunity).where(
+    33	                Opportunity.id == opportunity_id, Opportunity.org_id == org_id
+    34	            )
+    35	        )
+    36	    ).scalar_one_or_none()
+    37	    if opp is None:
+    38	        raise NotFoundError("Opportunity not found")
+    39	    filing = Filing(
+    40	        org_id=org_id,
+    41	        opportunity_id=opp.id,
+    42	        kind=opp.kind,
+    43	        status=FilingStatus.draft.value,
+    44	        owner_user_id=user_id,
+    45	    )
+    46	    session.add(filing)
+    47	    await session.flush()
+    48	    return filing
+    49	
+    50	
+    51	async def run_requirement_extraction(ctx: StepContext) -> None:
+    52	    session = ctx.session
+    53	    filing_id = uuid.UUID(str(ctx.params["filing_id"]))
+    54	    filing = (
+    55	        await session.execute(
+    56	            select(Filing).where(Filing.id == filing_id, Filing.org_id == ctx.org_id)
+    57	        )
+    58	    ).scalar_one_or_none()
+    59	    if filing is None:
+    60	        raise ValueError("Filing not found")
+    61	
+    62	    opp = await session.get(Opportunity, filing.opportunity_id)
+    63	    text = (opp.raw_text if opp else None) or ctx.params.get("raw_text") or ""
+    64	    if not text.strip():
+    65	        # Flagged, not silent (FR-RE-2): pause for the user to supply the solicitation.
+    66	        filing.status = FilingStatus.evidence_review.value
+    67	        raise NeedsInput("No solicitation text available; paste or upload the solicitation first.")
+    68	
+    69	    output = await RequirementExtractionAgent().run(
+    70	        ctx.agent_context(),
+    71	        RequirementExtractionInput(solicitation_text=text, kind=filing.kind),
+    72	    )
+    73	
+    74	    existing = (
+    75	        (
+    76	            await session.execute(
+    77	                select(FilingRequirement).where(FilingRequirement.filing_id == filing_id)
+    78	            )
+    79	        )
+    80	        .scalars()
+    81	        .all()
+    82	    )
+    83	    seen = {_norm_key(r.text) for r in existing}
+    84	    source_id = opp.source_id if opp else None
+    85	
+    86	    added = 0
+    87	    for req in output.requirements:
+    88	        key = _norm_key(req.text)
+    89	        if not key or key in seen:
+    90	            continue
+    91	        seen.add(key)
+    92	        session.add(
+    93	            FilingRequirement(
+    94	                org_id=ctx.org_id,
+    95	                filing_id=filing_id,
+    96	                text=req.text,
+    97	                category=req.category,
+    98	                mandatory=req.mandatory,
+    99	                source_id=source_id,  # citation back to the solicitation (CON-2)
+   100	                locator=req.locator,
+   101	                needs_review=req.confidence < 0.6,
+   102	            )
+   103	        )
+   104	        added += 1
+   105	
+   106	    filing.status = FilingStatus.evidence_review.value
+   107	    await session.flush()
+   108	    ctx.merge_results(
+   109	        requirementsExtracted=added,
+   110	        totalRequirements=len(existing) + added,
+   111	        flaggedForReview=sum(1 for req in output.requirements if req.confidence < 0.6),
+   112	    )
+
+exec
+/bin/zsh -lc "nl -ba apps/api/captureos/models/documents.py | sed -n '1,260p'" in /Users/anishguntreddi/Documents/hackathon
+ succeeded in 0ms:
+     1	"""Documents and their embedded chunks (FR-DI-*).
+     2	
+     3	The ``embedding`` column dimension is fixed at schema-creation time and must match
+     4	``Settings.embedding_dim`` (D7 = 768, Gemini text-embedding-004 compatible). Changing
+     5	the embedding model's dimension requires a migration.
+     6	"""
+     7	
+     8	from __future__ import annotations
+     9	
+    10	import uuid
+    11	
+    12	from pgvector.sqlalchemy import Vector
+    13	from sqlalchemy import ForeignKey, Index, Integer, String, Text, UniqueConstraint
+    14	from sqlalchemy.dialects.postgresql import UUID as PGUUID
+    15	from sqlalchemy.orm import Mapped, mapped_column, relationship
+    16	
+    17	from captureos.db.base import Base, OrgScopedMixin, TimestampMixin, UUIDPKMixin
+    18	from captureos.models.enums import DocumentSourceKind, ParseStatus
+    19	
+    20	EMBEDDING_DIM = 768  # keep in sync with Settings.embedding_dim
+    21	
+    22	
+    23	class Document(UUIDPKMixin, OrgScopedMixin, TimestampMixin, Base):
+    24	    __tablename__ = "documents"
+    25	    # Idempotent ingestion: same content within an org is not re-ingested (FR-DI-6).
+    26	    __table_args__ = (UniqueConstraint("org_id", "content_hash"),)
+    27	
+    28	    filename: Mapped[str] = mapped_column(String(512), nullable=False)
+    29	    storage_uri: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    30	    content_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    31	    mime_type: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    32	    source_kind: Mapped[str] = mapped_column(
+    33	        String(32), nullable=False, default=DocumentSourceKind.upload.value
+    34	    )
+    35	    parse_status: Mapped[str] = mapped_column(
+    36	        String(16), nullable=False, default=ParseStatus.pending.value
+    37	    )
+    38	    page_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    39	
+    40	    chunks: Mapped[list[DocumentChunk]] = relationship(
+    41	        back_populates="document", cascade="all, delete-orphan"
+    42	    )
+    43	
+    44	
+    45	class DocumentChunk(UUIDPKMixin, OrgScopedMixin, TimestampMixin, Base):
+    46	    __tablename__ = "document_chunks"
+    47	    __table_args__ = (
+    48	        UniqueConstraint("document_id", "ordinal"),
+    49	        # IVF/HNSW index added in M1 once data exists; cosine distance for retrieval.
+    50	        Index(
+    51	            "ix_document_chunks_embedding",
+    52	            "embedding",
+    53	            postgresql_using="hnsw",
+    54	            postgresql_with={"m": 16, "ef_construction": 64},
+    55	            postgresql_ops={"embedding": "vector_cosine_ops"},
+    56	        ),
+    57	    )
+    58	
+    59	    document_id: Mapped[uuid.UUID] = mapped_column(
+    60	        PGUUID(as_uuid=True),
+    61	        ForeignKey("documents.id", ondelete="CASCADE"),
+    62	        nullable=False,
+    63	        index=True,
+    64	    )
+    65	    ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
+    66	    text: Mapped[str] = mapped_column(Text, nullable=False)
+    67	    # Page/section reference so citations resolve to a source (FR-DI-5).
+    68	    locator: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    69	    embedding: Mapped[list[float] | None] = mapped_column(Vector(EMBEDDING_DIM), nullable=True)
+    70	
+    71	    document: Mapped[Document] = relationship(back_populates="chunks")
+
+exec
+/bin/zsh -lc "nl -ba apps/api/captureos/db/base.py | sed -n '1,220p'" in /Users/anishguntreddi/Documents/hackathon
+exec
+/bin/zsh -lc "nl -ba apps/api/captureos/models/opportunities.py | sed -n '1,260p'" in /Users/anishguntreddi/Documents/hackathon
+ succeeded in 0ms:
+     1	"""Declarative base, metadata naming convention, and common column mixins."""
+     2	
+     3	from __future__ import annotations
+     4	
+     5	import uuid
+     6	from datetime import datetime
+     7	
+     8	from sqlalchemy import DateTime, ForeignKey, MetaData, func
+     9	from sqlalchemy.dialects.postgresql import UUID as PGUUID
+    10	from sqlalchemy.orm import DeclarativeBase, Mapped, declared_attr, mapped_column
+    11	
+    12	# Deterministic constraint/index names → clean, reversible Alembic migrations.
+    13	NAMING_CONVENTION = {
+    14	    "ix": "ix_%(column_0_label)s",
+    15	    "uq": "uq_%(table_name)s_%(column_0_name)s",
+    16	    "ck": "ck_%(table_name)s_%(constraint_name)s",
+    17	    "fk": "fk_%(table_name)s_%(column_0_name)s_%(referred_table_name)s",
+    18	    "pk": "pk_%(table_name)s",
+    19	}
+    20	
+    21	
+    22	class Base(DeclarativeBase):
+    23	    metadata = MetaData(naming_convention=NAMING_CONVENTION)
+    24	
+    25	
+    26	class UUIDPKMixin:
+    27	    id: Mapped[uuid.UUID] = mapped_column(
+    28	        PGUUID(as_uuid=True),
+    29	        primary_key=True,
+    30	        default=uuid.uuid4,
+    31	    )
+    32	
+    33	
+    34	class TimestampMixin:
+    35	    created_at: Mapped[datetime] = mapped_column(
+    36	        DateTime(timezone=True),
+    37	        server_default=func.now(),
+    38	        nullable=False,
+    39	    )
+    40	    updated_at: Mapped[datetime] = mapped_column(
+    41	        DateTime(timezone=True),
+    42	        server_default=func.now(),
+    43	        onupdate=func.now(),
+    44	        nullable=False,
+    45	    )
+    46	
+    47	
+    48	class OrgScopedMixin:
+    49	    """Adds an indexed ``org_id`` FK (ON DELETE CASCADE). Every tenant table uses this
+    50	    so org isolation (CON-5) is uniform and queries can filter on one column."""
+    51	
+    52	    @declared_attr
+    53	    def org_id(cls) -> Mapped[uuid.UUID]:  # noqa: N805
+    54	        return mapped_column(
+    55	            PGUUID(as_uuid=True),
+    56	            ForeignKey("organizations.id", ondelete="CASCADE"),
+    57	            nullable=False,
+    58	            index=True,
+    59	        )
+
+ succeeded in 0ms:
+     1	"""Unified opportunities (gov_contract | grant | future verticals) — PRD §7.2.
+     2	
+     3	A single table with a ``kind`` discriminator and a ``details`` JSONB column for
+     4	kind-specific fields (NAICS, set-aside, award ceiling, CFDA, eligibility_rules, ...).
+     5	Triage fit (FR-GC-1) is stored here; per-filing recommendations live on the filing.
+     6	"""
+     7	
+     8	from __future__ import annotations
+     9	
+    10	import uuid
+    11	from datetime import datetime
+    12	
+    13	from sqlalchemy import DateTime, ForeignKey, Numeric, String, Text, text
+    14	from sqlalchemy.dialects.postgresql import JSONB
+    15	from sqlalchemy.dialects.postgresql import UUID as PGUUID
+    16	from sqlalchemy.orm import Mapped, mapped_column
+    17	
+    18	from captureos.db.base import Base, OrgScopedMixin, TimestampMixin, UUIDPKMixin
+    19	from captureos.models.enums import OpportunityKind
+    20	
+    21	
+    22	class Opportunity(UUIDPKMixin, OrgScopedMixin, TimestampMixin, Base):
+    23	    __tablename__ = "opportunities"
+    24	
+    25	    kind: Mapped[str] = mapped_column(
+    26	        String(32), nullable=False, default=OpportunityKind.gov_contract.value, index=True
+    27	    )
+    28	    title: Mapped[str] = mapped_column(String(1024), nullable=False)
+    29	    sponsor: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    30	    external_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    31	    deadline: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    32	
+    33	    source_id: Mapped[uuid.UUID | None] = mapped_column(
+    34	        PGUUID(as_uuid=True),
+    35	        ForeignKey("sources.id", ondelete="SET NULL"),
+    36	        nullable=True,
+    37	        index=True,
+    38	    )
+    39	    # Kind-specific fields (eligibility_rules, naics, set_aside, award_ceiling, cfda, ...).
+    40	    details: Mapped[dict] = mapped_column(
+    41	        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    42	    )
+    43	    raw_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    44	
+    45	    # Triage fit (FR-GC-1) — coarse pre-filing scoring from a scan.
+    46	    fit_score: Mapped[float | None] = mapped_column(Numeric(5, 2), nullable=True)
+    47	    decision_hint: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    48	    fit_rationale: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+
+exec
+/bin/zsh -lc "nl -ba apps/api/captureos/schemas/filing.py | sed -n '1,260p'" in /Users/anishguntreddi/Documents/hackathon
+ succeeded in 0ms:
+     1	"""Filing schemas (PRD §9.5)."""
+     2	
+     3	from __future__ import annotations
+     4	
+     5	import uuid
+     6	from datetime import datetime
+     7	
+     8	from captureos.schemas.common import CamelModel
+     9	from captureos.schemas.opportunity import OpportunitySummary
+    10	
+    11	
+    12	class FilingCreate(CamelModel):
+    13	    opportunity_id: uuid.UUID
+    14	
+    15	
+    16	class RequirementResponse(CamelModel):
+    17	    id: uuid.UUID
+    18	    text: str
+    19	    category: str
+    20	    mandatory: bool
+    21	    locator: str | None = None
+    22	    needs_review: bool = False
+    23	    source_id: uuid.UUID | None = None
+    24	
+    25	
+    26	class FilingResponse(CamelModel):
+    27	    id: uuid.UUID
+    28	    opportunity_id: uuid.UUID
+    29	    kind: str
+    30	    status: str
+    31	    owner_user_id: uuid.UUID | None = None
+    32	    created_at: datetime | None = None
+    33	
+    34	
+    35	class ComplianceRow(CamelModel):
+    36	    requirement_id: uuid.UUID
+    37	    requirement: str
+    38	    category: str
+    39	    mandatory: bool
+    40	    locator: str | None = None
+    41	    source_id: uuid.UUID | None = None
+    42	    status: str  # matched / partial / missing / user_provided
+    43	    score: float = 0.0
+    44	    evidence: str | None = None
+    45	    evidence_item_id: uuid.UUID | None = None
+    46	    rationale: str | None = None
+    47	
+    48	
+    49	class RecommendationResponse(CamelModel):
+    50	    decision: str | None = None
+    51	    score: float | None = None
+    52	    rationale: dict | None = None
+    53	    approved: bool = False
+    54	
+    55	
+    56	class ApprovalResponse(CamelModel):
+    57	    target: str
+    58	    decision: str
+    59	    notes: str | None = None
+    60	    created_at: datetime | None = None
+    61	
+    62	
+    63	class GapResolveRequest(CamelModel):
+    64	    document_id: uuid.UUID | None = None
+    65	    value: str | None = None
+    66	
+    67	
+    68	class ApprovalRequest(CamelModel):
+    69	    target: str = "recommendation"
+    70	    decision: str  # approved / rejected
+    71	    notes: str | None = None
+    72	
+    73	
+    74	class FilingAggregate(CamelModel):
+    75	    filing: FilingResponse
+    76	    opportunity: OpportunitySummary | None = None
+    77	    requirements: list[RequirementResponse] = []
+    78	    requirement_count: int = 0
+    79	    status: str
+    80	    compliance_matrix: list[ComplianceRow] = []
+    81	    gap_list: list[ComplianceRow] = []
+    82	    match_summary: dict = {}
+    83	    recommendation: RecommendationResponse | None = None
+    84	    approvals: list[ApprovalResponse] = []
+
+codex
+I’ve read the core M4 modules. Now I’m tracing where these records are read or mutated elsewhere, because the risky cases here are usually “loaded safely in the route, then dereferenced unsafely deeper in the workflow.”
+exec
+/bin/zsh -lc "rg -n \"Recommendation|approved|FilingStatus\\.approved|FilingStatus\\.recommended|ApprovalTarget|record_approval|build_compliance_matrix|EvidenceMatch|evidence_item_id|retrieve_relevant_chunks|cosine_distance|match_evidence|gap_resolution|package_review|ready\" apps/api/captureos -g '"'!**/__pycache__/**'"'" in /Users/anishguntreddi/Documents/hackathon
+ succeeded in 0ms:
+apps/api/captureos/workflows/pipelines.py:29:    WorkflowType.gap_resolution.value: 15,
+apps/api/captureos/workflows/pipelines.py:80:def _gap_resolution_pipeline(run: WorkflowRun) -> list[tuple[str, StepFn]]:
+apps/api/captureos/workflows/pipelines.py:91:    WorkflowType.gap_resolution.value: _gap_resolution_pipeline,
+apps/api/captureos/services/recommendation.py:9:from captureos.agents.recommendation import FitRecommendationAgent, RecommendationInput
+apps/api/captureos/services/recommendation.py:11:from captureos.models.filings import EvidenceMatch, Filing, FilingRequirement, Recommendation
+apps/api/captureos/services/recommendation.py:41:            await session.execute(select(EvidenceMatch).where(EvidenceMatch.filing_id == filing_id))
+apps/api/captureos/services/recommendation.py:62:    out = await FitRecommendationAgent().run(
+apps/api/captureos/services/recommendation.py:64:        RecommendationInput(
+apps/api/captureos/services/recommendation.py:80:        await session.execute(select(Recommendation).where(Recommendation.filing_id == filing_id))
+apps/api/captureos/services/recommendation.py:83:        rec = Recommendation(org_id=ctx.org_id, filing_id=filing_id)
+apps/api/captureos/services/recommendation.py:92:    rec.approved = False  # draft until a human approves (FR-RC-3 / FR-AP-1)
+apps/api/captureos/services/recommendation.py:94:    filing.status = FilingStatus.recommended.value
+apps/api/captureos/services/gaps.py:14:from captureos.models.filings import EvidenceMatch, Filing, FilingRequirement
+apps/api/captureos/services/gaps.py:107:        delete(EvidenceMatch).where(
+apps/api/captureos/services/gaps.py:108:            EvidenceMatch.filing_id == filing_id,
+apps/api/captureos/services/gaps.py:109:            EvidenceMatch.requirement_id == requirement_id,
+apps/api/captureos/services/gaps.py:113:        EvidenceMatch(
+apps/api/captureos/services/gaps.py:117:            evidence_item_id=evidence.id,
+apps/api/captureos/services/evidence.py:18:    EvidenceMatchInput,
+apps/api/captureos/services/evidence.py:21:from captureos.ingestion.retrieval import retrieve_relevant_chunks
+apps/api/captureos/services/evidence.py:24:from captureos.models.filings import EvidenceMatch, Filing, FilingRequirement
+apps/api/captureos/services/evidence.py:92:    already = {
+apps/api/captureos/services/evidence.py:97:        for chunk, _distance in await retrieve_relevant_chunks(
+apps/api/captureos/services/evidence.py:100:            if chunk.id in already or _overlap(req.text, chunk.text) < _MATERIALIZE_MIN_OVERLAP:
+apps/api/captureos/services/evidence.py:113:            already.add(chunk.id)
+apps/api/captureos/services/evidence.py:127:    await session.execute(delete(EvidenceMatch).where(EvidenceMatch.filing_id == filing.id))
+apps/api/captureos/services/evidence.py:140:            EvidenceMatchInput(
+apps/api/captureos/services/evidence.py:147:        evidence_item_id: uuid.UUID | None = None
+apps/api/captureos/services/evidence.py:150:            evidence_item_id = best.id
+apps/api/captureos/services/evidence.py:158:        if evidence_item_id is None and status != MatchStatus.missing.value:
+apps/api/captureos/services/evidence.py:161:            EvidenceMatch(
+apps/api/captureos/services/evidence.py:165:                evidence_item_id=evidence_item_id,
+apps/api/captureos/services/company_brain.py:62:    # Pull text from the org's already-ingested documents (most recent chunks).
+apps/api/captureos/services/compliance.py:15:from captureos.models.filings import EvidenceMatch, FilingRequirement
+apps/api/captureos/services/compliance.py:20:async def build_compliance_matrix(session: AsyncSession, filing_id: uuid.UUID) -> list[dict]:
+apps/api/captureos/services/compliance.py:35:            await session.execute(select(EvidenceMatch).where(EvidenceMatch.filing_id == filing_id))
+apps/api/captureos/services/compliance.py:40:    evidence_ids = [m.evidence_item_id for m in matches.values() if m.evidence_item_id]
+apps/api/captureos/services/compliance.py:56:        ev = evidence.get(match.evidence_item_id) if match and match.evidence_item_id else None
+apps/api/captureos/services/compliance.py:68:                "evidence_item_id": ev.id if ev else None,
+apps/api/captureos/workflows/engine.py:98:            continue  # idempotent: already completed (re-delivery / resume)
+apps/api/captureos/models/filings.py:15:    ApprovalTarget,
+apps/api/captureos/models/filings.py:20:    RecommendationDecision,
+apps/api/captureos/models/filings.py:45:    evidence_matches: Mapped[list[EvidenceMatch]] = relationship(
+apps/api/captureos/models/filings.py:48:    recommendation: Mapped[Recommendation | None] = relationship(
+apps/api/captureos/models/filings.py:84:class EvidenceMatch(UUIDPKMixin, OrgScopedMixin, TimestampMixin, Base):
+apps/api/captureos/models/filings.py:99:    evidence_item_id: Mapped[uuid.UUID | None] = mapped_column(
+apps/api/captureos/models/filings.py:113:class Recommendation(UUIDPKMixin, OrgScopedMixin, TimestampMixin, Base):
+apps/api/captureos/models/filings.py:125:        String(16), nullable=False, default=RecommendationDecision.do_not_pursue.value
+apps/api/captureos/models/filings.py:131:    approved: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+apps/api/captureos/models/filings.py:173:        String(16), nullable=False, default=ApprovalTarget.recommendation.value
+apps/api/captureos/models/filings.py:179:        String(16), nullable=False, default=ApprovalDecision.approved.value
+apps/api/captureos/services/approvals.py:2:filing state machine. A recommendation is only 'pursue'-actionable once approved (CON-1 spirit)."""
+apps/api/captureos/services/approvals.py:11:from captureos.models.enums import ApprovalDecision, ApprovalTarget, FilingStatus
+apps/api/captureos/services/approvals.py:12:from captureos.models.filings import Approval, Filing, Recommendation
+apps/api/captureos/services/approvals.py:15:async def record_approval(
+apps/api/captureos/services/approvals.py:35:    approved = decision == ApprovalDecision.approved.value
+apps/api/captureos/services/approvals.py:37:    if target == ApprovalTarget.recommendation.value:
+apps/api/captureos/services/approvals.py:40:                select(Recommendation).where(Recommendation.filing_id == filing.id)
+apps/api/captureos/services/approvals.py:44:            rec.approved = approved
+apps/api/captureos/services/approvals.py:45:        # Approved → ready to package (FR-AP-1). Rejected → back to editable (FR-AP-3).
+apps/api/captureos/services/approvals.py:46:        filing.status = FilingStatus.approved.value if approved else FilingStatus.recommended.value
+apps/api/captureos/services/approvals.py:47:    elif target == ApprovalTarget.package.value:
+apps/api/captureos/services/approvals.py:49:        filing.status = FilingStatus.ready.value if approved else FilingStatus.package_review.value
+apps/api/captureos/ingestion/service.py:55:    # Idempotency: identical content already ingested for this org → don't duplicate chunks.
+apps/api/captureos/api/filings.py:17:from captureos.models.enums import ActorType, ApprovalDecision, ApprovalTarget, WorkflowType
+apps/api/captureos/api/filings.py:18:from captureos.models.filings import Approval, Filing, FilingRequirement, Recommendation
+apps/api/captureos/api/filings.py:29:    RecommendationResponse,
+apps/api/captureos/api/filings.py:34:from captureos.services.approvals import record_approval
+apps/api/captureos/api/filings.py:35:from captureos.services.compliance import build_compliance_matrix, gap_rows, match_summary
+apps/api/captureos/api/filings.py:41:_VALID_DECISIONS = {ApprovalDecision.approved.value, ApprovalDecision.rejected.value}
+apps/api/captureos/api/filings.py:42:_VALID_TARGETS = {ApprovalTarget.recommendation.value, ApprovalTarget.package.value}
+apps/api/captureos/api/filings.py:135:async def match_evidence(
+apps/api/captureos/api/filings.py:180:        ctx, session, background_tasks, filing, WorkflowType.gap_resolution.value, params
+apps/api/captureos/api/filings.py:193:    filing = await record_approval(
+apps/api/captureos/api/filings.py:229:    matrix = await build_compliance_matrix(session, filing_id)
+apps/api/captureos/api/filings.py:234:        await session.execute(select(Recommendation).where(Recommendation.filing_id == filing_id))
+apps/api/captureos/api/filings.py:283:            RecommendationResponse(
+apps/api/captureos/api/filings.py:287:                approved=rec.approved,
+apps/api/captureos/schemas/filing.py:45:    evidence_item_id: uuid.UUID | None = None
+apps/api/captureos/schemas/filing.py:49:class RecommendationResponse(CamelModel):
+apps/api/captureos/schemas/filing.py:53:    approved: bool = False
+apps/api/captureos/schemas/filing.py:70:    decision: str  # approved / rejected
+apps/api/captureos/schemas/filing.py:83:    recommendation: RecommendationResponse | None = None
+apps/api/captureos/models/__init__.py:12:    EvidenceMatch,
+apps/api/captureos/models/__init__.py:16:    Recommendation,
+apps/api/captureos/models/__init__.py:35:    "EvidenceMatch",
+apps/api/captureos/models/__init__.py:39:    "Recommendation",
+apps/api/captureos/api/health.py:22:@router.get("/readyz", response_model=Health)
+apps/api/captureos/api/health.py:23:async def readyz(session: SessionDep) -> Health:
+apps/api/captureos/api/health.py:27:    return Health(status="ready", version=__version__, environment=settings.captureos_env.value)
+apps/api/captureos/ingestion/retrieval.py:18:async def retrieve_relevant_chunks(
+apps/api/captureos/ingestion/retrieval.py:25:    distance = DocumentChunk.embedding.cosine_distance(query_vec)
+apps/api/captureos/config.py:5:makes the system "local-first, cloud-ready" (PROJECT.md D1).
+apps/api/captureos/models/enums.py:63:    # Future verticals (schema-ready, not implemented in MVP):
+apps/api/captureos/models/enums.py:76:    approved = "approved"
+apps/api/captureos/models/enums.py:78:    package_review = "package_review"
+apps/api/captureos/models/enums.py:79:    ready = "ready"
+apps/api/captureos/models/enums.py:101:class RecommendationDecision(StrEnum):
+apps/api/captureos/models/enums.py:121:    ready = "ready"
+apps/api/captureos/models/enums.py:124:class ApprovalTarget(StrEnum):
+apps/api/captureos/models/enums.py:130:    approved = "approved"
+apps/api/captureos/models/enums.py:140:    gap_resolution = "gap_resolution"
+apps/api/captureos/agents/matching.py:73:class EvidenceMatchInput(BaseModel):
+apps/api/captureos/agents/matching.py:79:class EvidenceMatchOutput(BaseModel):
+apps/api/captureos/agents/matching.py:86:class EvidenceMappingAgent(Agent[EvidenceMatchInput, EvidenceMatchOutput]):
+apps/api/captureos/agents/matching.py:89:    output_model = EvidenceMatchOutput
+apps/api/captureos/agents/matching.py:96:    def build_prompt(self, data: EvidenceMatchInput) -> str:
+apps/api/captureos/agents/matching.py:106:    async def mock_output(self, ctx: AgentContext, data: EvidenceMatchInput) -> EvidenceMatchOutput:
+apps/api/captureos/agents/matching.py:109:            return EvidenceMatchOutput(
+apps/api/captureos/agents/matching.py:137:        return EvidenceMatchOutput(
+apps/api/captureos/api/auth.py:51:        raise ConflictError("An account with this email already exists")
+apps/api/captureos/agents/recommendation.py:1:"""Fit Recommendation agent (PRD agent #8, FR-RC-1/2). Produces a pursue/do_not_pursue
+apps/api/captureos/agents/recommendation.py:15:class RecommendationInput(BaseModel):
+apps/api/captureos/agents/recommendation.py:27:class RecommendationOutput(BaseModel):
+apps/api/captureos/agents/recommendation.py:35:class FitRecommendationAgent(Agent[RecommendationInput, RecommendationOutput]):
+apps/api/captureos/agents/recommendation.py:38:    output_model = RecommendationOutput
+apps/api/captureos/agents/recommendation.py:45:    def build_prompt(self, data: RecommendationInput) -> str:
+apps/api/captureos/agents/recommendation.py:55:        self, ctx: AgentContext, data: RecommendationInput
+apps/api/captureos/agents/recommendation.py:56:    ) -> RecommendationOutput:
+apps/api/captureos/agents/recommendation.py:68:            f"{data.matched}/{data.total_requirements} requirements already evidenced",
+apps/api/captureos/agents/recommendation.py:79:        return RecommendationOutput(
+apps/api/captureos/api/orgs.py:98:        raise ConflictError("User is already a member of this organization")
+
+exec
+/bin/zsh -lc "nl -ba apps/api/captureos/workflows/engine.py | sed -n '1,320p'" in /Users/anishguntreddi/Documents/hackathon
+exec
+/bin/zsh -lc "nl -ba apps/api/captureos/workflows/dispatch.py | sed -n '1,260p'" in /Users/anishguntreddi/Documents/hackathon
+ succeeded in 0ms:
+     1	"""Workflow dispatch (M2): enqueue a durable job in the caller's transaction, commit
+     2	(commit-then-publish), then trigger the inline drain when the API hosts the worker."""
+     3	
+     4	from __future__ import annotations
+     5	
+     6	from fastapi import BackgroundTasks
+     7	from sqlalchemy.ext.asyncio import AsyncSession
+     8	
+     9	from captureos.config import get_settings
+    10	from captureos.models.workflow import WorkflowRun
+    11	from captureos.workflows.queue import drain_workflow_jobs, enqueue_job
+    12	
+    13	__all__ = ["dispatch_run"]
+    14	
+    15	
+    16	async def dispatch_run(
+    17	    session: AsyncSession, background_tasks: BackgroundTasks, run: WorkflowRun
+    18	) -> None:
+    19	    enqueue_job(session, run.id, run.org_id)
+    20	    await session.commit()  # run + job committed atomically before any consumer runs
+    21	    if get_settings().workflow_inline_worker:
+    22	        background_tasks.add_task(drain_workflow_jobs)
+
+ succeeded in 0ms:
+     1	"""Pipeline executor. Runs an ordered list of named steps for a workflow_run, recording
+     2	each step's status, the agent runs inside it, and audit events (CON-3, NFR-8).
+     3	
+     4	Failures are always visible: a failed step marks the run ``failed`` (or ``needs_input``
+     5	when a step raises ``NeedsInput``) with the error recorded — never a silent empty result.
+     6	"""
+     7	
+     8	from __future__ import annotations
+     9	
+    10	from collections.abc import Awaitable, Callable
+    11	from dataclasses import dataclass
+    12	
+    13	from sqlalchemy import func, select
+    14	from sqlalchemy.ext.asyncio import AsyncSession
+    15	
+    16	from captureos.agents.base import AgentContext
+    17	from captureos.audit import record_event
+    18	from captureos.logging import get_logger
+    19	from captureos.models.enums import StepStatus, WorkflowStatus
+    20	from captureos.models.workflow import AgentRun, WorkflowRun, WorkflowStep
+    21	
+    22	logger = get_logger(__name__)
+    23	
+    24	
+    25	class NeedsInput(Exception):
+    26	    """A step raises this to pause the run pending user input (e.g. a missing document)."""
+    27	
+    28	
+    29	@dataclass(slots=True)
+    30	class StepContext:
+    31	    session: AsyncSession
+    32	    run: WorkflowRun
+    33	    step: WorkflowStep
+    34	
+    35	    @property
+    36	    def org_id(self):
+    37	        return self.run.org_id
+    38	
+    39	    @property
+    40	    def params(self) -> dict:
+    41	        return self.run.input_params or {}
+    42	
+    43	    def merge_results(self, **values) -> None:
+    44	        """Accumulate partial results so the client can poll them as steps complete."""
+    45	        current = dict(self.run.partial_results or {})
+    46	        current.update(values)
+    47	        self.run.partial_results = current
+    48	
+    49	    def agent_context(self) -> AgentContext:
+    50	        return AgentContext(
+    51	            session=self.session,
+    52	            org_id=self.run.org_id,
+    53	            run_id=self.run.id,
+    54	            step_id=self.step.id,
+    55	            filing_id=self.run.filing_id,
+    56	        )
+    57	
+    58	
+    59	StepFn = Callable[[StepContext], Awaitable[None]]
+    60	
+    61	
+    62	async def _get_or_create_step(
+    63	    session: AsyncSession, run: WorkflowRun, name: str, ordinal: int
+    64	) -> WorkflowStep:
+    65	    existing = await session.execute(
+    66	        select(WorkflowStep).where(WorkflowStep.run_id == run.id, WorkflowStep.name == name)
+    67	    )
+    68	    step = existing.scalar_one_or_none()
+    69	    if step is None:
+    70	        step = WorkflowStep(
+    71	            org_id=run.org_id,
+    72	            run_id=run.id,
+    73	            name=name,
+    74	            ordinal=ordinal,
+    75	            status=StepStatus.pending.value,
+    76	        )
+    77	        session.add(step)
+    78	        await session.flush()
+    79	    return step
+    80	
+    81	
+    82	async def run_pipeline(
+    83	    session: AsyncSession,
+    84	    run: WorkflowRun,
+    85	    steps: list[tuple[str, StepFn]],
+    86	    *,
+    87	    time_saved_minutes: int | None = None,
+    88	) -> None:
+    89	    run.status = WorkflowStatus.running.value
+    90	    await session.flush()
+    91	    await record_event(
+    92	        "workflow.started", org_id=run.org_id, run_id=run.id, payload={"type": run.type}
+    93	    )
+    94	
+    95	    for ordinal, (name, fn) in enumerate(steps):
+    96	        step = await _get_or_create_step(session, run, name, ordinal)
+    97	        if step.status == StepStatus.done.value:
+    98	            continue  # idempotent: already completed (re-delivery / resume)
+    99	
+   100	        step.status = StepStatus.running.value
+   101	        await session.flush()
+   102	        try:
+   103	            await fn(StepContext(session=session, run=run, step=step))
+   104	        except NeedsInput as ni:
+   105	            step.status = StepStatus.skipped.value
+   106	            run.status = WorkflowStatus.needs_input.value
+   107	            run.error = str(ni)
+   108	            await session.flush()
+   109	            await record_event(
+   110	                "workflow.needs_input", org_id=run.org_id, run_id=run.id, status="needs_input"
+   111	            )
+   112	            return
+   113	        except Exception as exc:  # noqa: BLE001 - failure must be captured, not propagated
+   114	            step.status = StepStatus.failed.value
+   115	            step.error = str(exc)
+   116	            run.status = WorkflowStatus.failed.value
+   117	            run.error = str(exc)
+   118	            await session.flush()
+   119	            await record_event(
+   120	                "workflow.failed",
+   121	                org_id=run.org_id,
+   122	                run_id=run.id,
+   123	                step_id=step.id,
+   124	                status="failed",
+   125	                payload={"error": str(exc), "step": name},
+   126	            )
+   127	            logger.error("workflow.step_failed", run_id=str(run.id), step=name, error=str(exc))
+   128	            return
+   129	
+   130	        step.status = StepStatus.done.value
+   131	        await session.flush()
+   132	
+   133	    # Roll up token usage from this run's agent invocations (cost visibility, NFR-6/FR-AU-1).
+   134	    totals = (
+   135	        await session.execute(
+   136	            select(
+   137	                func.coalesce(func.sum(AgentRun.input_tokens), 0),
+   138	                func.coalesce(func.sum(AgentRun.output_tokens), 0),
+   139	            )
+   140	            .join(WorkflowStep, WorkflowStep.id == AgentRun.step_id)
+   141	            .where(WorkflowStep.run_id == run.id)
+   142	        )
+   143	    ).one()
+   144	    run.total_input_tokens, run.total_output_tokens = int(totals[0]), int(totals[1])
+   145	
+   146	    run.status = WorkflowStatus.succeeded.value
+   147	    if time_saved_minutes is not None:
+   148	        run.time_saved_minutes = time_saved_minutes
+   149	    await session.flush()
+   150	    await record_event(
+   151	        "workflow.succeeded",
+   152	        org_id=run.org_id,
+   153	        run_id=run.id,
+   154	        status="succeeded",
+   155	        input_tokens=run.total_input_tokens,
+   156	        output_tokens=run.total_output_tokens,
+   157	    )
+
+exec
+/bin/zsh -lc "nl -ba apps/api/captureos/models/workflow.py | sed -n '1,260p'" in /Users/anishguntreddi/Documents/hackathon
+ succeeded in 0ms:
+     1	"""Workflow engine tables (PRD §8, §10) — runs → steps → agent_runs.
+     2	
+     3	Drives every async pipeline and is the backbone of the audit trail (CON-3, FR-AU-1).
+     4	``agent_runs.step_id`` is the only link between steps and agent runs (the PRD's
+     5	``workflow_steps.agent_run_id`` is dropped to avoid a circular FK); retries append rows.
+     6	"""
+     7	
+     8	from __future__ import annotations
+     9	
+    10	import uuid
+    11	
+    12	from sqlalchemy import ForeignKey, Integer, String, Text, UniqueConstraint, text
+    13	from sqlalchemy.dialects.postgresql import JSONB
+    14	from sqlalchemy.dialects.postgresql import UUID as PGUUID
+    15	from sqlalchemy.orm import Mapped, mapped_column, relationship
+    16	
+    17	from captureos.db.base import Base, OrgScopedMixin, TimestampMixin, UUIDPKMixin
+    18	from captureos.models.enums import AgentRunStatus, StepStatus, WorkflowStatus, WorkflowType
+    19	
+    20	
+    21	class WorkflowRun(UUIDPKMixin, OrgScopedMixin, TimestampMixin, Base):
+    22	    __tablename__ = "workflow_runs"
+    23	
+    24	    filing_id: Mapped[uuid.UUID | None] = mapped_column(
+    25	        PGUUID(as_uuid=True),
+    26	        ForeignKey("filings.id", ondelete="CASCADE"),
+    27	        nullable=True,
+    28	        index=True,
+    29	    )
+    30	    type: Mapped[str] = mapped_column(
+    31	        String(32), nullable=False, default=WorkflowType.company_brain.value
+    32	    )
+    33	    status: Mapped[str] = mapped_column(
+    34	        String(16), nullable=False, default=WorkflowStatus.queued.value, index=True
+    35	    )
+    36	    input_params: Mapped[dict] = mapped_column(
+    37	        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    38	    )
+    39	    partial_results: Mapped[dict] = mapped_column(
+    40	        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    41	    )
+    42	    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    43	    time_saved_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    44	    total_input_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    45	    total_output_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    46	
+    47	    steps: Mapped[list[WorkflowStep]] = relationship(
+    48	        back_populates="run", cascade="all, delete-orphan", order_by="WorkflowStep.ordinal"
+    49	    )
+    50	
+    51	
+    52	class WorkflowStep(UUIDPKMixin, OrgScopedMixin, TimestampMixin, Base):
+    53	    __tablename__ = "workflow_steps"
+    54	    # Idempotency: a step name is unique within a run (FR-RE §10.5, idempotent re-delivery).
+    55	    __table_args__ = (UniqueConstraint("run_id", "name"),)
+    56	
+    57	    run_id: Mapped[uuid.UUID] = mapped_column(
+    58	        PGUUID(as_uuid=True),
+    59	        ForeignKey("workflow_runs.id", ondelete="CASCADE"),
+    60	        nullable=False,
+    61	        index=True,
+    62	    )
+    63	    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    64	    ordinal: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    65	    status: Mapped[str] = mapped_column(
+    66	        String(16), nullable=False, default=StepStatus.pending.value
+    67	    )
+    68	    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    69	
+    70	    run: Mapped[WorkflowRun] = relationship(back_populates="steps")
+    71	    agent_runs: Mapped[list[AgentRun]] = relationship(
+    72	        back_populates="step", cascade="all, delete-orphan"
+    73	    )
+    74	
+    75	
+    76	class AgentRun(UUIDPKMixin, OrgScopedMixin, TimestampMixin, Base):
+    77	    __tablename__ = "agent_runs"
+    78	
+    79	    step_id: Mapped[uuid.UUID] = mapped_column(
+    80	        PGUUID(as_uuid=True),
+    81	        ForeignKey("workflow_steps.id", ondelete="CASCADE"),
+    82	        nullable=False,
+    83	        index=True,
+    84	    )
+    85	    agent_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    86	    model: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    87	    input: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    88	    output: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    89	    input_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    90	    output_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    91	    latency_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    92	    status: Mapped[str] = mapped_column(
+    93	        String(16), nullable=False, default=AgentRunStatus.success.value
+    94	    )
+    95	    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    96	
+    97	    step: Mapped[WorkflowStep] = relationship(back_populates="agent_runs")
+
+exec
+/bin/zsh -lc "nl -ba apps/api/captureos/workflows/queue.py | sed -n '1,320p'" in /Users/anishguntreddi/Documents/hackathon
+exec
+/bin/zsh -lc "nl -ba apps/api/captureos/agents/recommendation.py | sed -n '1,220p'" in /Users/anishguntreddi/Documents/hackathon
+ succeeded in 0ms:
+     1	"""Durable job queue: enqueue (in the caller's txn), claim (FOR UPDATE SKIP LOCKED),
+     2	and drain. The worker process and the inline drain both call ``drain_workflow_jobs``."""
+     3	
+     4	from __future__ import annotations
+     5	
+     6	import uuid
+     7	from datetime import UTC, datetime, timedelta
+     8	from typing import cast
+     9	
+    10	from sqlalchemy import CursorResult, func, select, update
+    11	from sqlalchemy.ext.asyncio import AsyncSession
+    12	
+    13	from captureos.config import get_settings
+    14	from captureos.db.session import session_scope
+    15	from captureos.logging import get_logger
+    16	from captureos.models.jobs import WorkflowJob
+    17	from captureos.workflows.runner import execute_workflow_run
+    18	
+    19	logger = get_logger(__name__)
+    20	
+    21	
+    22	def enqueue_job(session: AsyncSession, run_id: uuid.UUID, org_id: uuid.UUID | None = None) -> None:
+    23	    """Insert a pending job in the caller's transaction (commit-then-publish atomicity)."""
+    24	    session.add(WorkflowJob(run_id=run_id, org_id=org_id, status="pending"))
+    25	
+    26	
+    27	async def _claim_one(session: AsyncSession) -> WorkflowJob | None:
+    28	    result = await session.execute(
+    29	        select(WorkflowJob)
+    30	        .where(WorkflowJob.status == "pending", WorkflowJob.available_at <= func.now())
+    31	        .order_by(WorkflowJob.available_at)
+    32	        .limit(1)
+    33	        .with_for_update(skip_locked=True)
+    34	    )
+    35	    job = result.scalar_one_or_none()
+    36	    if job is not None:
+    37	        job.status = "processing"
+    38	        job.attempts += 1
+    39	        job.locked_at = func.now()
+    40	    return job
+    41	
+    42	
+    43	async def _finish_job(job_id: uuid.UUID, status: str, error: str | None = None) -> None:
+    44	    async with session_scope() as session:
+    45	        job = await session.get(WorkflowJob, job_id)
+    46	        if job is not None:
+    47	            job.status = status
+    48	            job.error = error
+    49	            job.locked_at = None
+    50	
+    51	
+    52	async def _retry_job(job_id: uuid.UUID, error: str) -> None:
+    53	    async with session_scope() as session:
+    54	        job = await session.get(WorkflowJob, job_id)
+    55	        if job is not None:
+    56	            job.status = "pending"
+    57	            job.error = error
+    58	            job.locked_at = None
+    59	
+    60	
+    61	async def requeue_stale_jobs(timeout_seconds: int = 300) -> int:
+    62	    """Re-queue jobs stranded in 'processing' past the timeout (worker-crash recovery, NFR-8)."""
+    63	    cutoff = datetime.now(UTC) - timedelta(seconds=timeout_seconds)
+    64	    async with session_scope() as session:
+    65	        result = await session.execute(
+    66	            update(WorkflowJob)
+    67	            .where(WorkflowJob.status == "processing", WorkflowJob.locked_at < cutoff)
+    68	            .values(status="pending", locked_at=None)
+    69	        )
+    70	        count = cast("CursorResult", result).rowcount or 0
+    71	    if count:
+    72	        logger.info("worker.requeued_stale", count=count)
+    73	    return count
+    74	
+    75	
+    76	async def drain_workflow_jobs(max_jobs: int = 100) -> int:
+    77	    """Claim and run pending jobs until none remain (or max_jobs). Safe to run concurrently
+    78	    across workers + the inline drain — SKIP LOCKED guarantees exactly-once claim."""
+    79	    settings = get_settings()
+    80	    processed = 0
+    81	    while processed < max_jobs:
+    82	        async with session_scope() as session:
+    83	            job = await _claim_one(session)
+    84	            if job is None:
+    85	                break
+    86	            job_id, run_id, attempts = job.id, job.run_id, job.attempts
+    87	        # Claim is committed (status=processing); execute outside that short txn.
+    88	        try:
+    89	            await execute_workflow_run(run_id)
+    90	            await _finish_job(job_id, "done")
+    91	        except Exception as exc:  # noqa: BLE001 - record failure, keep draining
+    92	            logger.error("worker.job_failed", job_id=str(job_id), error=str(exc))
+    93	            if attempts >= settings.worker_max_attempts:
+    94	                await _finish_job(job_id, "failed", str(exc))
+    95	            else:
+    96	                await _retry_job(job_id, str(exc))
+    97	        processed += 1
+    98	    return processed
+
+ succeeded in 0ms:
+     1	"""Fit Recommendation agent (PRD agent #8, FR-RC-1/2). Produces a pursue/do_not_pursue
+     2	decision from evidence coverage + mandatory gaps, with reasons for/against and key gaps.
+     3	
+     4	Mock caps the score hard when mandatory requirements are unmet (PRD §10.2 'cap score on
+     5	high-gap'). The recommendation is a DRAFT until a human approves it (FR-RC-3)."""
+     6	
+     7	from __future__ import annotations
+     8	
+     9	from pydantic import BaseModel, Field
+    10	
+    11	from captureos.agents.base import Agent, AgentContext
+    12	from captureos.providers import ModelTier
+    13	
+    14	
+    15	class RecommendationInput(BaseModel):
+    16	    opportunity_title: str
+    17	    opportunity_kind: str = "gov_contract"
+    18	    opportunity_fit_score: float | None = None
+    19	    total_requirements: int = 0
+    20	    matched: int = 0
+    21	    partial: int = 0
+    22	    missing: int = 0
+    23	    mandatory_gaps: int = 0
+    24	    top_gaps: list[str] = Field(default_factory=list)
+    25	
+    26	
+    27	class RecommendationOutput(BaseModel):
+    28	    decision: str  # pursue / do_not_pursue
+    29	    score: float  # 0-100
+    30	    reasons_for: list[str]
+    31	    reasons_against: list[str]
+    32	    key_gaps: list[str]
+    33	
+    34	
+    35	class FitRecommendationAgent(Agent[RecommendationInput, RecommendationOutput]):
+    36	    name = "fit_recommendation"
+    37	    tier = ModelTier.pro
+    38	    output_model = RecommendationOutput
+    39	    system_prompt = (
+    40	        "You are a capture decision lead. Recommend pursue/do_not_pursue with a 0-100 score from "
+    41	        "evidence coverage and unmet mandatory requirements. Cite the specific counts and gaps. "
+    42	        "Be conservative: many unmet mandatory requirements push toward do_not_pursue. JSON only."
+    43	    )
+    44	
+    45	    def build_prompt(self, data: RecommendationInput) -> str:
+    46	        return (
+    47	            f"Opportunity: {data.opportunity_title} ({data.opportunity_kind}), triage fit "
+    48	            f"{data.opportunity_fit_score}.\nRequirements: {data.total_requirements} total — "
+    49	            f"{data.matched} matched, {data.partial} partial, {data.missing} missing "
+    50	            f"({data.mandatory_gaps} mandatory unmet).\nTop gaps: {data.top_gaps}\n\n"
+    51	            "Return decision, score (0-100), reasons_for, reasons_against, key_gaps."
+    52	        )
+    53	
+    54	    async def mock_output(
+    55	        self, ctx: AgentContext, data: RecommendationInput
+    56	    ) -> RecommendationOutput:
+    57	        total = max(1, data.total_requirements)
+    58	        coverage = (data.matched + 0.5 * data.partial) / total
+    59	        triage = data.opportunity_fit_score if data.opportunity_fit_score is not None else 50.0
+    60	
+    61	        score = coverage * 70.0 + triage * 0.3
+    62	        score -= data.mandatory_gaps * 6.0  # hard cap on high mandatory-gap (§10.2)
+    63	        score = max(0.0, min(100.0, score))
+    64	
+    65	        decision = "pursue" if score >= 55 and data.mandatory_gaps <= 3 else "do_not_pursue"
+    66	
+    67	        reasons_for = [
+    68	            f"{data.matched}/{data.total_requirements} requirements already evidenced",
+    69	            f"Opportunity triage fit score is {round(triage)}",
+    70	        ]
+    71	        reasons_against: list[str] = []
+    72	        if data.mandatory_gaps:
+    73	            reasons_against.append(f"{data.mandatory_gaps} mandatory requirements are unmet")
+    74	        if data.missing:
+    75	            reasons_against.append(f"{data.missing} requirements have no supporting evidence yet")
+    76	        if not reasons_against:
+    77	            reasons_against.append("No major blockers identified at this stage")
+    78	
+    79	        return RecommendationOutput(
+    80	            decision=decision,
+    81	            score=round(score, 1),
+    82	            reasons_for=reasons_for,
+    83	            reasons_against=reasons_against,
+    84	            key_gaps=data.top_gaps[:5],
+    85	        )
+
+exec
+/bin/zsh -lc "rg -n \"WorkflowRunCreated|workflow_runs|input_params|partial_results|dispatch_run\\(|drain_workflow_jobs|enqueue_job\\(\" apps/api/captureos/api apps/api/captureos/workflows apps/api/captureos/services -g '"'!**/__pycache__/**'"'" in /Users/anishguntreddi/Documents/hackathon
+ succeeded in 0ms:
+apps/api/captureos/api/company_profile.py:23:from captureos.schemas.workflow import WorkflowRunCreated
+apps/api/captureos/api/company_profile.py:55:@router.post("/build", response_model=WorkflowRunCreated, status_code=status.HTTP_202_ACCEPTED)
+apps/api/captureos/api/company_profile.py:61:) -> WorkflowRunCreated:
+apps/api/captureos/api/company_profile.py:66:        input_params=body.model_dump(mode="json"),
+apps/api/captureos/api/company_profile.py:70:    await dispatch_run(session, background_tasks, run)
+apps/api/captureos/api/company_profile.py:78:    return WorkflowRunCreated(workflow_run_id=run.id)
+apps/api/captureos/workflows/queue.py:2:and drain. The worker process and the inline drain both call ``drain_workflow_jobs``."""
+apps/api/captureos/workflows/queue.py:22:def enqueue_job(session: AsyncSession, run_id: uuid.UUID, org_id: uuid.UUID | None = None) -> None:
+apps/api/captureos/workflows/queue.py:76:async def drain_workflow_jobs(max_jobs: int = 100) -> int:
+apps/api/captureos/api/filings.py:33:from captureos.schemas.workflow import WorkflowRunCreated
+apps/api/captureos/api/filings.py:74:) -> WorkflowRunCreated:
+apps/api/captureos/api/filings.py:80:        input_params={"filing_id": str(filing.id), **params},
+apps/api/captureos/api/filings.py:84:    await dispatch_run(session, background_tasks, run)
+apps/api/captureos/api/filings.py:85:    return WorkflowRunCreated(workflow_run_id=run.id)
+apps/api/captureos/api/filings.py:118:    response_model=WorkflowRunCreated,
+apps/api/captureos/api/filings.py:123:) -> WorkflowRunCreated:
+apps/api/captureos/api/filings.py:132:    response_model=WorkflowRunCreated,
+apps/api/captureos/api/filings.py:137:) -> WorkflowRunCreated:
+apps/api/captureos/api/filings.py:146:    response_model=WorkflowRunCreated,
+apps/api/captureos/api/filings.py:151:) -> WorkflowRunCreated:
+apps/api/captureos/api/filings.py:160:    response_model=WorkflowRunCreated,
+apps/api/captureos/api/filings.py:170:) -> WorkflowRunCreated:
+apps/api/captureos/workflows/dispatch.py:11:from captureos.workflows.queue import drain_workflow_jobs, enqueue_job
+apps/api/captureos/workflows/dispatch.py:16:async def dispatch_run(
+apps/api/captureos/workflows/dispatch.py:19:    enqueue_job(session, run.id, run.org_id)
+apps/api/captureos/workflows/dispatch.py:22:        background_tasks.add_task(drain_workflow_jobs)
+apps/api/captureos/workflows/engine.py:41:        return self.run.input_params or {}
+apps/api/captureos/workflows/engine.py:45:        current = dict(self.run.partial_results or {})
+apps/api/captureos/workflows/engine.py:47:        self.run.partial_results = current
+apps/api/captureos/api/opportunities.py:21:from captureos.schemas.workflow import WorkflowRunCreated
+apps/api/captureos/api/opportunities.py:28:    "/opportunity-scans", response_model=WorkflowRunCreated, status_code=status.HTTP_202_ACCEPTED
+apps/api/captureos/api/opportunities.py:35:) -> WorkflowRunCreated:
+apps/api/captureos/api/opportunities.py:40:        input_params=body.model_dump(mode="json"),
+apps/api/captureos/api/opportunities.py:44:    await dispatch_run(session, background_tasks, run)
+apps/api/captureos/api/opportunities.py:53:    return WorkflowRunCreated(workflow_run_id=run.id)
+apps/api/captureos/api/documents.py:28:from captureos.schemas.workflow import WorkflowRunCreated
+apps/api/captureos/api/documents.py:146:    "/{document_id}/ingest", response_model=WorkflowRunCreated, status_code=status.HTTP_202_ACCEPTED
+apps/api/captureos/api/documents.py:154:) -> WorkflowRunCreated:
+apps/api/captureos/api/documents.py:163:        input_params=params,
+apps/api/captureos/api/documents.py:167:    await dispatch_run(session, background_tasks, run)
+apps/api/captureos/api/documents.py:168:    return WorkflowRunCreated(workflow_run_id=run.id)
+apps/api/captureos/api/documents.py:171:@router.post("/paste", response_model=WorkflowRunCreated, status_code=status.HTTP_202_ACCEPTED)
+apps/api/captureos/api/documents.py:174:) -> WorkflowRunCreated:
+apps/api/captureos/api/documents.py:192:        input_params={"document_id": str(doc_id), "raw_text": body.raw_text},
+apps/api/captureos/api/documents.py:196:    await dispatch_run(session, background_tasks, run)
+apps/api/captureos/api/documents.py:197:    return WorkflowRunCreated(workflow_run_id=run.id)
+apps/api/captureos/api/workflows.py:41:        partial_results=run.partial_results or {},
+
+codex
+I’m checking the supporting ingest path now because some of the citation guarantees in `services/evidence.py` and `services/gaps.py` depend on whether a `Source` row is always created for documents. If that invariant doesn’t hold, those paths fail or create dangling rows.
+exec
+/bin/zsh -lc "nl -ba apps/api/captureos/ingestion/service.py | sed -n '1,320p'" in /Users/anishguntreddi/Documents/hackathon
+ succeeded in 0ms:
+     1	"""Ingest content into a Document: parse → chunk → embed → persist, with content-hash
+     2	dedupe (FR-DI-6) and a backing Source so chunks are citable (FR-DI-5, CON-2)."""
+     3	
+     4	from __future__ import annotations
+     5	
+     6	import hashlib
+     7	import uuid
+     8	from dataclasses import dataclass
+     9	
+    10	from sqlalchemy import select
+    11	from sqlalchemy.ext.asyncio import AsyncSession
+    12	
+    13	from captureos.ingestion.chunking import chunk_document
+    14	from captureos.logging import get_logger
+    15	from captureos.models.documents import Document, DocumentChunk
+    16	from captureos.models.enums import ParseStatus, SourceKind
+    17	from captureos.models.evidence import Source
+    18	from captureos.providers import get_docparse, get_embeddings
+    19	from captureos.providers.base import ParsedDocument, ParsedPage
+    20	
+    21	logger = get_logger(__name__)
+    22	
+    23	
+    24	@dataclass(slots=True)
+    25	class IngestResult:
+    26	    document: Document
+    27	    deduped: bool
+    28	    chunk_count: int
+    29	    source_id: uuid.UUID | None
+    30	
+    31	
+    32	async def ingest_content(
+    33	    session: AsyncSession,
+    34	    org_id: uuid.UUID,
+    35	    *,
+    36	    document: Document,
+    37	    data: bytes | None = None,
+    38	    raw_text: str | None = None,
+    39	) -> IngestResult:
+    40	    if raw_text is not None:
+    41	        content = raw_text.encode("utf-8")
+    42	        parsed = ParsedDocument(
+    43	            text=raw_text, pages=[ParsedPage(page=1, text=raw_text)], page_count=1
+    44	        )
+    45	    elif data is not None:
+    46	        content = data
+    47	        parsed = await get_docparse().parse(
+    48	            content, mime_type=document.mime_type, filename=document.filename
+    49	        )
+    50	    else:
+    51	        raise ValueError("ingest_content requires either data or raw_text")
+    52	
+    53	    real_hash = hashlib.sha256(content).hexdigest()
+    54	
+    55	    # Idempotency: identical content already ingested for this org → don't duplicate chunks.
+    56	    dup = (
+    57	        await session.execute(
+    58	            select(Document).where(
+    59	                Document.org_id == org_id,
+    60	                Document.content_hash == real_hash,
+    61	                Document.parse_status == ParseStatus.parsed.value,
+    62	                Document.id != document.id,
+    63	            )
+    64	        )
+    65	    ).scalar_one_or_none()
+    66	    if dup is not None:
+    67	        document.parse_status = ParseStatus.parsed.value
+    68	        document.page_count = parsed.page_count
+    69	        logger.info("ingest.deduped", document_id=str(document.id), existing=str(dup.id))
+    70	        return IngestResult(document=document, deduped=True, chunk_count=0, source_id=None)
+    71	
+    72	    document.content_hash = real_hash
+    73	    document.page_count = parsed.page_count
+    74	
+    75	    # A Source row makes the document's chunks citable.
+    76	    source = Source(
+    77	        org_id=org_id,
+    78	        kind=SourceKind.document.value,
+    79	        document_id=document.id,
+    80	        title=document.filename,
+    81	        snapshot_uri=document.storage_uri,
+    82	    )
+    83	    session.add(source)
+    84	
+    85	    chunks = chunk_document(parsed)
+    86	    if chunks:
+    87	        embedding = await get_embeddings().embed([c.text for c in chunks])
+    88	        for i, chunk in enumerate(chunks):
+    89	            session.add(
+    90	                DocumentChunk(
+    91	                    org_id=org_id,
+    92	                    document_id=document.id,
+    93	                    ordinal=chunk.ordinal,
+    94	                    text=chunk.text,
+    95	                    locator=chunk.locator,
+    96	                    embedding=embedding.vectors[i],
+    97	                )
+    98	            )
+    99	
+   100	    document.parse_status = ParseStatus.parsed.value
+   101	    await session.flush()
+   102	    return IngestResult(
+   103	        document=document, deduped=False, chunk_count=len(chunks), source_id=source.id
+   104	    )
+
+exec
+/bin/zsh -lc "nl -ba apps/api/captureos/api/documents.py | sed -n '1,320p'" in /Users/anishguntreddi/Documents/hackathon
+ succeeded in 0ms:
+     1	"""Document routes (PRD §9.2): initiate-upload, upload sink, ingest, paste, list/get.
+     2	
+     3	Uploads are org-scoped: the storage key is always prefixed with the caller's org id, and
+     4	the blob routes only ever touch keys under that prefix (CON-5 + path-traversal defense)."""
+     5	
+     6	from __future__ import annotations
+     7	
+     8	import uuid
+     9	
+    10	from fastapi import APIRouter, BackgroundTasks, Request, Response, status
+    11	from sqlalchemy import func, select
+    12	
+    13	from captureos.audit import record_event
+    14	from captureos.config import StorageProviderName, get_settings
+    15	from captureos.core.deps import OrgEditor, OrgViewer, SessionDep
+    16	from captureos.core.errors import AppError, NotFoundError
+    17	from captureos.models.documents import Document, DocumentChunk
+    18	from captureos.models.enums import ActorType, DocumentSourceKind, ParseStatus, WorkflowType
+    19	from captureos.models.workflow import WorkflowRun
+    20	from captureos.providers import get_storage
+    21	from captureos.schemas.document import (
+    22	    DocumentResponse,
+    23	    IngestRequest,
+    24	    InitiateUploadRequest,
+    25	    InitiateUploadResponse,
+    26	    PasteRequest,
+    27	)
+    28	from captureos.schemas.workflow import WorkflowRunCreated
+    29	from captureos.workflows.dispatch import dispatch_run
+    30	
+    31	router = APIRouter(prefix="/orgs/{org_id}/documents", tags=["documents"])
+    32	blobs_router = APIRouter(prefix="/orgs/{org_id}/blobs", tags=["documents"])
+    33	
+    34	_MAX_UPLOAD_BYTES = 25 * 1024 * 1024  # 25 MB cap to prevent memory-exhaustion DoS
+    35	
+    36	
+    37	async def _chunk_count(session: SessionDep, document_id: uuid.UUID) -> int:
+    38	    return (
+    39	        await session.execute(
+    40	            select(func.count())
+    41	            .select_from(DocumentChunk)
+    42	            .where(DocumentChunk.document_id == document_id)
+    43	        )
+    44	    ).scalar_one()
+    45	
+    46	
+    47	def _doc_response(doc: Document, chunk_count: int) -> DocumentResponse:
+    48	    return DocumentResponse(
+    49	        id=doc.id,
+    50	        filename=doc.filename,
+    51	        mime_type=doc.mime_type,
+    52	        source_kind=doc.source_kind,
+    53	        parse_status=doc.parse_status,
+    54	        chunk_count=chunk_count,
+    55	        page_count=doc.page_count,
+    56	    )
+    57	
+    58	
+    59	async def _get_doc_or_404(
+    60	    session: SessionDep, org_id: uuid.UUID, document_id: uuid.UUID
+    61	) -> Document:
+    62	    doc = (
+    63	        await session.execute(
+    64	            select(Document).where(Document.id == document_id, Document.org_id == org_id)
+    65	        )
+    66	    ).scalar_one_or_none()
+    67	    if doc is None:
+    68	        raise NotFoundError("Document not found")
+    69	    return doc
+    70	
+    71	
+    72	@router.post("/initiate-upload", response_model=InitiateUploadResponse)
+    73	async def initiate_upload(
+    74	    body: InitiateUploadRequest, ctx: OrgEditor, session: SessionDep
+    75	) -> InitiateUploadResponse:
+    76	    doc_id = uuid.uuid4()
+    77	    rel_key = f"{doc_id}/{body.filename}"
+    78	    full_key = f"{ctx.org_id}/{rel_key}"
+    79	    presigned = get_storage().presign_upload(full_key, content_type=body.mime_type)
+    80	
+    81	    doc = Document(
+    82	        id=doc_id,
+    83	        org_id=ctx.org_id,
+    84	        filename=body.filename,
+    85	        mime_type=body.mime_type,
+    86	        content_hash=f"pending:{doc_id}",  # real hash assigned at ingest
+    87	        source_kind=DocumentSourceKind.upload.value,
+    88	        parse_status=ParseStatus.pending.value,
+    89	        storage_uri=presigned.storage_uri,
+    90	    )
+    91	    session.add(doc)
+    92	    await session.flush()
+    93	
+    94	    # Local storage uploads go through our org-scoped route; GCS uses the signed URL.
+    95	    if get_settings().storage_provider is StorageProviderName.local:
+    96	        upload_url = f"/api/v1/orgs/{ctx.org_id}/blobs/{rel_key}"
+    97	    else:
+    98	        upload_url = presigned.url
+    99	
+   100	    await record_event(
+   101	        "document.upload_initiated",
+   102	        org_id=ctx.org_id,
+   103	        actor=ActorType.user,
+   104	        actor_id=str(ctx.user.id),
+   105	        payload={"document_id": str(doc_id), "filename": body.filename},
+   106	    )
+   107	    return InitiateUploadResponse(
+   108	        document_id=doc_id,
+   109	        upload_url=upload_url,
+   110	        method=presigned.method,
+   111	        storage_uri=presigned.storage_uri,
+   112	    )
+   113	
+   114	
+   115	@blobs_router.put("/{rel_key:path}")
+   116	async def put_blob(request: Request, ctx: OrgEditor, rel_key: str) -> dict:
+   117	    # Stream with a hard cap so an unbounded body can't exhaust memory (NFR-2).
+   118	    buffer = bytearray()
+   119	    async for chunk in request.stream():
+   120	        buffer.extend(chunk)
+   121	        if len(buffer) > _MAX_UPLOAD_BYTES:
+   122	            raise AppError(
+   123	                "Upload exceeds the 25 MB limit",
+   124	                code="payload_too_large",
+   125	                status_code=413,
+   126	            )
+   127	    # Key is always re-prefixed with the caller's org id; LocalStorage rejects traversal.
+   128	    key = f"{ctx.org_id}/{rel_key}"
+   129	    blob = await get_storage().put(
+   130	        key, bytes(buffer), content_type=request.headers.get("content-type")
+   131	    )
+   132	    return {"ok": True, "size": blob.size, "storageUri": blob.uri}
+   133	
+   134	
+   135	@blobs_router.get("/{rel_key:path}")
+   136	async def get_blob(ctx: OrgViewer, rel_key: str) -> Response:
+   137	    storage = get_storage()
+   138	    uri = f"local://{ctx.org_id}/{rel_key}"
+   139	    if not await storage.exists(uri):
+   140	        raise NotFoundError("Blob not found")
+   141	    data = await storage.get(uri)
+   142	    return Response(content=data, media_type="application/octet-stream")
+   143	
+   144	
+   145	@router.post(
+   146	    "/{document_id}/ingest", response_model=WorkflowRunCreated, status_code=status.HTTP_202_ACCEPTED
+   147	)
+   148	async def ingest_document(
+   149	    body: IngestRequest,
+   150	    ctx: OrgEditor,
+   151	    session: SessionDep,
+   152	    background_tasks: BackgroundTasks,
+   153	    document_id: uuid.UUID,
+   154	) -> WorkflowRunCreated:
+   155	    await _get_doc_or_404(session, ctx.org_id, document_id)
+   156	    params: dict = {"document_id": str(document_id)}
+   157	    if body.raw_text is not None:
+   158	        params["raw_text"] = body.raw_text
+   159	    run = WorkflowRun(
+   160	        org_id=ctx.org_id,
+   161	        type=WorkflowType.document_ingest.value,
+   162	        status="queued",
+   163	        input_params=params,
+   164	    )
+   165	    session.add(run)
+   166	    await session.flush()
+   167	    await dispatch_run(session, background_tasks, run)
+   168	    return WorkflowRunCreated(workflow_run_id=run.id)
+   169	
+   170	
+   171	@router.post("/paste", response_model=WorkflowRunCreated, status_code=status.HTTP_202_ACCEPTED)
+   172	async def paste_document(
+   173	    body: PasteRequest, ctx: OrgEditor, session: SessionDep, background_tasks: BackgroundTasks
+   174	) -> WorkflowRunCreated:
+   175	    """Ingest pasted solicitation text with no file upload (FR-DI-3)."""
+   176	    doc_id = uuid.uuid4()
+   177	    doc = Document(
+   178	        id=doc_id,
+   179	        org_id=ctx.org_id,
+   180	        filename=body.filename,
+   181	        mime_type="text/plain",
+   182	        content_hash=f"pending:{doc_id}",
+   183	        source_kind=DocumentSourceKind.paste.value,
+   184	        parse_status=ParseStatus.pending.value,
+   185	    )
+   186	    session.add(doc)
+   187	    await session.flush()
+   188	    run = WorkflowRun(
+   189	        org_id=ctx.org_id,
+   190	        type=WorkflowType.document_ingest.value,
+   191	        status="queued",
+   192	        input_params={"document_id": str(doc_id), "raw_text": body.raw_text},
+   193	    )
+   194	    session.add(run)
+   195	    await session.flush()
+   196	    await dispatch_run(session, background_tasks, run)
+   197	    return WorkflowRunCreated(workflow_run_id=run.id)
+   198	
+   199	
+   200	@router.get("", response_model=list[DocumentResponse])
+   201	async def list_documents(ctx: OrgViewer, session: SessionDep) -> list[DocumentResponse]:
+   202	    docs = (
+   203	        (
+   204	            await session.execute(
+   205	                select(Document)
+   206	                .where(Document.org_id == ctx.org_id)
+   207	                .order_by(Document.created_at.desc())
+   208	            )
+   209	        )
+   210	        .scalars()
+   211	        .all()
+   212	    )
+   213	    out: list[DocumentResponse] = []
+   214	    for doc in docs:
+   215	        out.append(_doc_response(doc, await _chunk_count(session, doc.id)))
+   216	    return out
+   217	
+   218	
+   219	@router.get("/{document_id}", response_model=DocumentResponse)
+   220	async def get_document(
+   221	    ctx: OrgViewer, session: SessionDep, document_id: uuid.UUID
+   222	) -> DocumentResponse:
+   223	    doc = await _get_doc_or_404(session, ctx.org_id, document_id)
+   224	    return _doc_response(doc, await _chunk_count(session, doc.id))
+
+exec
+/bin/zsh -lc "rg -n \"Source\\(|source_id=|document_id ==|document_id=|SourceKind\\.document|user_input\" apps/api/captureos -g '"'!**/__pycache__/**'"'" in /Users/anishguntreddi/Documents/hackathon
+ succeeded in 0ms:
+apps/api/captureos/services/scan.py:82:        source = Source(
+apps/api/captureos/services/scan.py:97:            source_id=source.id,
+apps/api/captureos/services/company_brain.py:40:    # Always have a user_input source so every derived fact can cite something (CON-2).
+apps/api/captureos/services/company_brain.py:41:    user_source = Source(
+apps/api/captureos/services/company_brain.py:42:        org_id=org_id, kind=SourceKind.user_input.value, title="Owner-provided profile inputs"
+apps/api/captureos/services/company_brain.py:46:    source_ids["user_input"] = user_source.id
+apps/api/captureos/services/company_brain.py:53:        web_source = Source(
+apps/api/captureos/services/company_brain.py:82:                    .where(Source.org_id == org_id, Source.kind == SourceKind.document.value)
+apps/api/captureos/services/company_brain.py:166:    fallback = source_ids["user_input"]
+apps/api/captureos/services/company_brain.py:173:                source_id=source_ids.get(claim.source_kind, fallback),  # CON-2: always sourced
+apps/api/captureos/services/gaps.py:23:                .where(Source.org_id == org_id, Source.kind == SourceKind.user_input.value)
+apps/api/captureos/services/gaps.py:31:        source = Source(
+apps/api/captureos/services/gaps.py:32:            org_id=org_id, kind=SourceKind.user_input.value, title="Owner-provided evidence"
+apps/api/captureos/services/gaps.py:70:            source_id=source.id,
+apps/api/captureos/services/gaps.py:86:                    select(Source.id).where(Source.org_id == org_id, Source.document_id == doc.id)
+apps/api/captureos/services/gaps.py:96:            source_id=source_id,
+apps/api/captureos/services/evidence.py:57:                select(Source.id).where(Source.org_id == org_id, Source.document_id == document_id)
+apps/api/captureos/services/evidence.py:108:                    source_id=source_id,
+apps/api/captureos/models/evidence.py:20:class Source(UUIDPKMixin, OrgScopedMixin, TimestampMixin, Base):
+apps/api/captureos/services/filings.py:99:                source_id=source_id,  # citation back to the solicitation (CON-2)
+apps/api/captureos/api/documents.py:42:            .where(DocumentChunk.document_id == document_id)
+apps/api/captureos/api/documents.py:108:        document_id=doc_id,
+apps/api/captureos/agents/company_brain.py:51:    source_kind: str  # web / user_input / document
+apps/api/captureos/agents/company_brain.py:138:            "list where each claim cites source_kind (web|user_input|document)."
+apps/api/captureos/agents/company_brain.py:146:            "web" if data.has_website else ("document" if data.has_documents else "user_input")
+apps/api/captureos/agents/company_brain.py:213:                    source_kind="user_input",
+apps/api/captureos/api/company_profile.py:107:                    .where(Source.org_id == ctx.org_id, Source.kind == SourceKind.user_input.value)
+apps/api/captureos/api/company_profile.py:115:            user_source = Source(
+apps/api/captureos/api/company_profile.py:117:                kind=SourceKind.user_input.value,
+apps/api/captureos/api/company_profile.py:132:                    source_id=user_source.id,
+apps/api/captureos/api/filings.py:273:                source_id=r.source_id,
+apps/api/captureos/models/enums.py:44:    user_input = "user_input"
+apps/api/captureos/ingestion/service.py:69:        logger.info("ingest.deduped", document_id=str(document.id), existing=str(dup.id))
+apps/api/captureos/ingestion/service.py:70:        return IngestResult(document=document, deduped=True, chunk_count=0, source_id=None)
+apps/api/captureos/ingestion/service.py:76:    source = Source(
+apps/api/captureos/ingestion/service.py:78:        kind=SourceKind.document.value,
+apps/api/captureos/ingestion/service.py:79:        document_id=document.id,
+apps/api/captureos/ingestion/service.py:92:                    document_id=document.id,
+apps/api/captureos/ingestion/service.py:103:        document=document, deduped=False, chunk_count=len(chunks), source_id=source.id
+
+exec
+/bin/zsh -lc "nl -ba apps/api/captureos/services/documents.py | sed -n '1,260p'" in /Users/anishguntreddi/Documents/hackathon
+ succeeded in 0ms:
+     1	"""Document ingestion workflow step (FR-DI-1/2/3): load the blob (or pasted text),
+     2	run the ingest pipeline, and record chunk counts."""
+     3	
+     4	from __future__ import annotations
+     5	
+     6	import uuid
+     7	
+     8	from sqlalchemy import select
+     9	
+    10	from captureos.ingestion.service import ingest_content
+    11	from captureos.models.documents import Document
+    12	from captureos.providers import get_storage
+    13	from captureos.workflows.engine import StepContext
+    14	
+    15	
+    16	async def run_document_ingest(ctx: StepContext) -> None:
+    17	    session = ctx.session
+    18	    org_id = ctx.org_id
+    19	    params = ctx.params
+    20	
+    21	    document_id = uuid.UUID(str(params["document_id"]))
+    22	    document = (
+    23	        await session.execute(
+    24	            select(Document).where(Document.id == document_id, Document.org_id == org_id)
+    25	        )
+    26	    ).scalar_one_or_none()
+    27	    if document is None:
+    28	        raise ValueError(f"Document {document_id} not found in org")
+    29	
+    30	    raw_text = params.get("raw_text")
+    31	    if raw_text is not None:
+    32	        result = await ingest_content(session, org_id, document=document, raw_text=raw_text)
+    33	    else:
+    34	        if not document.storage_uri:
+    35	            raise ValueError("Document has no uploaded content and no pasted text")
+    36	        data = await get_storage().get(document.storage_uri)
+    37	        result = await ingest_content(session, org_id, document=document, data=data)
+    38	
+    39	    ctx.merge_results(
+    40	        documentId=str(document.id),
+    41	        chunkCount=result.chunk_count,
+    42	        deduped=result.deduped,
+    43	        parseStatus=document.parse_status,
+    44	    )
+
+exec
+/bin/zsh -lc "nl -ba apps/api/captureos/services/company_brain.py | sed -n '1,240p'" in /Users/anishguntreddi/Documents/hackathon
+ succeeded in 0ms:
+     1	"""Company Brain orchestration (FR-CB-*): gather sources → run agent → persist profile +
+     2	sourced evidence, preserving user overrides."""
+     3	
+     4	from __future__ import annotations
+     5	
+     6	import uuid
+     7	
+     8	from sqlalchemy import select
+     9	from sqlalchemy.ext.asyncio import AsyncSession
+    10	
+    11	from captureos.agents.company_brain import CompanyBrainAgent, CompanyBrainInput, CompanyBrainOutput
+    12	from captureos.ingestion.website import fetch_website_text
+    13	from captureos.models.company import CompanyProfile
+    14	from captureos.models.documents import Document, DocumentChunk
+    15	from captureos.models.enums import EvidenceOrigin, SourceKind
+    16	from captureos.models.evidence import EvidenceItem, Source
+    17	from captureos.workflows.engine import StepContext
+    18	
+    19	_MAX_DOC_EXCERPTS = 15
+    20	
+    21	# Profile fields the agent populates (also the keys honored by user overrides, FR-CB-5).
+    22	_AGENT_FIELDS = (
+    23	    "services",
+    24	    "naics_guesses",
+    25	    "funding_categories",
+    26	    "target_customers",
+    27	    "certifications",
+    28	    "capability_statement",
+    29	)
+    30	
+    31	
+    32	async def gather_company_sources(ctx: StepContext) -> dict:
+    33	    """Create the citable sources and collect grounding text excerpts."""
+    34	    session = ctx.session
+    35	    org_id = ctx.org_id
+    36	    params = ctx.params
+    37	
+    38	    source_ids: dict[str, uuid.UUID] = {}
+    39	
+    40	    # Always have a user_input source so every derived fact can cite something (CON-2).
+    41	    user_source = Source(
+    42	        org_id=org_id, kind=SourceKind.user_input.value, title="Owner-provided profile inputs"
+    43	    )
+    44	    session.add(user_source)
+    45	    await session.flush()
+    46	    source_ids["user_input"] = user_source.id
+    47	
+    48	    excerpts: list[str] = []
+    49	
+    50	    website_url = params.get("website_url")
+    51	    if website_url:
+    52	        text = await fetch_website_text(website_url)
+    53	        web_source = Source(
+    54	            org_id=org_id, kind=SourceKind.web.value, url=website_url, title=website_url
+    55	        )
+    56	        session.add(web_source)
+    57	        await session.flush()
+    58	        source_ids["web"] = web_source.id
+    59	        if text:
+    60	            excerpts.append(text)
+    61	
+    62	    # Pull text from the org's already-ingested documents (most recent chunks).
+    63	    chunk_rows = (
+    64	        (
+    65	            await session.execute(
+    66	                select(DocumentChunk.text)
+    67	                .join(Document, Document.id == DocumentChunk.document_id)
+    68	                .where(DocumentChunk.org_id == org_id)
+    69	                .order_by(DocumentChunk.created_at.desc())
+    70	                .limit(_MAX_DOC_EXCERPTS)
+    71	            )
+    72	        )
+    73	        .scalars()
+    74	        .all()
+    75	    )
+    76	    if chunk_rows:
+    77	        excerpts.extend(chunk_rows)
+    78	        doc_source = (
+    79	            (
+    80	                await session.execute(
+    81	                    select(Source)
+    82	                    .where(Source.org_id == org_id, Source.kind == SourceKind.document.value)
+    83	                    .order_by(Source.created_at.desc())
+    84	                )
+    85	            )
+    86	            .scalars()
+    87	            .first()
+    88	        )
+    89	        if doc_source is not None:
+    90	            source_ids["document"] = doc_source.id
+    91	
+    92	    ctx.merge_results(sourcesCreated=len(source_ids), excerptsCollected=len(excerpts))
+    93	    return {
+    94	        "source_ids": source_ids,
+    95	        "excerpts": excerpts,
+    96	        "has_website": bool(website_url),
+    97	        "has_documents": bool(chunk_rows),
+    98	    }
+    99	
+   100	
+   101	def _apply_profile(profile: CompanyProfile, output: CompanyBrainOutput, params: dict) -> None:
+   102	    overrides = profile.user_overrides or {}
+   103	
+   104	    def set_field(field: str, value) -> None:
+   105	        if field not in overrides:
+   106	            setattr(profile, field, value)
+   107	
+   108	    set_field("website_url", params.get("website_url") or profile.website_url)
+   109	    set_field("industry", params.get("industry") or profile.industry)
+   110	    set_field("location", params.get("location") or profile.location)
+   111	    set_field("description", params.get("description") or profile.description)
+   112	    set_field("services", [s.model_dump() for s in output.services])
+   113	    set_field("naics_guesses", [n.model_dump() for n in output.naics_guesses])
+   114	    set_field("funding_categories", output.funding_categories)
+   115	    set_field("target_customers", output.target_customers)
+   116	    set_field("certifications", [c.model_dump() for c in output.certifications])
+   117	    set_field("capability_statement", output.capability_statement)
+   118	    # The missing-info checklist always reflects the latest run.
+   119	    profile.missing_fields = output.missing_fields
+   120	
+   121	
+   122	async def run_company_brain(ctx: StepContext, gathered: dict) -> None:
+   123	    session: AsyncSession = ctx.session
+   124	    org_id = ctx.org_id
+   125	    params = ctx.params
+   126	    source_ids: dict[str, uuid.UUID] = gathered["source_ids"]
+   127	
+   128	    agent_input = CompanyBrainInput(
+   129	        name=params.get("name", "Unknown Company"),
+   130	        website_url=params.get("website_url"),
+   131	        industry=params.get("industry"),
+   132	        location=params.get("location"),
+   133	        description=params.get("description"),
+   134	        document_excerpts=gathered["excerpts"],
+   135	        has_website=gathered["has_website"],
+   136	        has_documents=gathered["has_documents"],
+   137	    )
+   138	    output = await CompanyBrainAgent().run(ctx.agent_context(), agent_input)
+   139	
+   140	    # Upsert the profile, preserving user overrides (FR-CB-5/6).
+   141	    profile = (
+   142	        await session.execute(select(CompanyProfile).where(CompanyProfile.org_id == org_id))
+   143	    ).scalar_one_or_none()
+   144	    if profile is None:
+   145	        profile = CompanyProfile(org_id=org_id)
+   146	        session.add(profile)
+   147	    _apply_profile(profile, output, params)
+   148	    await session.flush()
+   149	
+   150	    # Replace inferred evidence from prior runs (keep user_provided), then materialize new.
+   151	    existing = (
+   152	        (
+   153	            await session.execute(
+   154	                select(EvidenceItem).where(
+   155	                    EvidenceItem.org_id == org_id,
+   156	                    EvidenceItem.origin == EvidenceOrigin.inferred.value,
+   157	                )
+   158	            )
+   159	        )
+   160	        .scalars()
+   161	        .all()
+   162	    )
+   163	    for item in existing:
+   164	        await session.delete(item)
+   165	
+   166	    fallback = source_ids["user_input"]
+   167	    for claim in output.evidence:
+   168	        session.add(
+   169	            EvidenceItem(
+   170	                org_id=org_id,
+   171	                type=claim.type,
+   172	                content=claim.content,
+   173	                source_id=source_ids.get(claim.source_kind, fallback),  # CON-2: always sourced
+   174	                origin=EvidenceOrigin.inferred.value,
+   175	                confidence=claim.confidence,
+   176	            )
+   177	        )
+   178	    await session.flush()
+   179	    ctx.merge_results(
+   180	        profileBuilt=True,
+   181	        servicesCount=len(output.services),
+   182	        evidenceCount=len(output.evidence),
+   183	        missingFieldsCount=len(output.missing_fields),
+   184	    )
+
+exec
+/bin/zsh -lc "rg -n \"rec\\.approved|approved\\)|Recommendation\\(|decision == \\\"pursue\\\"|decision == RecommendationDecision|FilingStatus\\.approved|FilingStatus\\.ready|package_build|GeneratedDocument|citation_validated|approved = False|approved = approved\" apps/api/captureos -g '"'!**/__pycache__/**'"'" in /Users/anishguntreddi/Documents/hackathon
+ succeeded in 0ms:
+apps/api/captureos/services/recommendation.py:83:        rec = Recommendation(org_id=ctx.org_id, filing_id=filing_id)
+apps/api/captureos/services/recommendation.py:92:    rec.approved = False  # draft until a human approves (FR-RC-3 / FR-AP-1)
+apps/api/captureos/services/approvals.py:44:            rec.approved = approved
+apps/api/captureos/services/approvals.py:46:        filing.status = FilingStatus.approved.value if approved else FilingStatus.recommended.value
+apps/api/captureos/services/approvals.py:49:        filing.status = FilingStatus.ready.value if approved else FilingStatus.package_review.value
+apps/api/captureos/api/filings.py:287:                approved=rec.approved,
+apps/api/captureos/models/filings.py:51:    generated_documents: Mapped[list[GeneratedDocument]] = relationship(
+apps/api/captureos/models/filings.py:113:class Recommendation(UUIDPKMixin, OrgScopedMixin, TimestampMixin, Base):
+apps/api/captureos/models/filings.py:136:class GeneratedDocument(UUIDPKMixin, OrgScopedMixin, TimestampMixin, Base):
+apps/api/captureos/models/filings.py:158:    citation_validated: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+apps/api/captureos/models/enums.py:142:    package_build = "package_build"
+apps/api/captureos/models/__init__.py:15:    GeneratedDocument,
+apps/api/captureos/models/__init__.py:38:    "GeneratedDocument",
+
+exec
+/bin/zsh -lc "nl -ba apps/api/captureos/api/workflows.py | sed -n '1,240p'" in /Users/anishguntreddi/Documents/hackathon
+ succeeded in 0ms:
+     1	"""Workflow-run polling (PRD §9.4)."""
+     2	
+     3	from __future__ import annotations
+     4	
+     5	import uuid
+     6	
+     7	from fastapi import APIRouter
+     8	from sqlalchemy import select
+     9	
+    10	from captureos.core.deps import OrgViewer, SessionDep
+    11	from captureos.core.errors import NotFoundError
+    12	from captureos.models.workflow import WorkflowRun, WorkflowStep
+    13	from captureos.schemas.workflow import WorkflowRunResponse, WorkflowStepResponse
+    14	
+    15	router = APIRouter(prefix="/orgs/{org_id}/workflow-runs", tags=["workflows"])
+    16	
+    17	
+    18	@router.get("/{run_id}", response_model=WorkflowRunResponse)
+    19	async def get_workflow_run(
+    20	    ctx: OrgViewer, session: SessionDep, run_id: uuid.UUID
+    21	) -> WorkflowRunResponse:
+    22	    run = await session.get(WorkflowRun, run_id)
+    23	    if run is None or run.org_id != ctx.org_id:  # CON-5
+    24	        raise NotFoundError("Workflow run not found")
+    25	    steps = (
+    26	        (
+    27	            await session.execute(
+    28	                select(WorkflowStep)
+    29	                .where(WorkflowStep.run_id == run.id)
+    30	                .order_by(WorkflowStep.ordinal)
+    31	            )
+    32	        )
+    33	        .scalars()
+    34	        .all()
+    35	    )
+    36	    return WorkflowRunResponse(
+    37	        id=run.id,
+    38	        type=run.type,
+    39	        status=run.status,
+    40	        steps=[WorkflowStepResponse(name=s.name, status=s.status) for s in steps],
+    41	        partial_results=run.partial_results or {},
+    42	        time_saved_minutes=run.time_saved_minutes,
+    43	        error=run.error,
+    44	    )
+
+codex
+One citation invariant problem showed up outside the new M4 files: evidence rows referenced by matches are later deleted elsewhere with `ON DELETE SET NULL`. I’m verifying that path now because it can turn a previously valid `matched` row into an uncitable one without going through `map_evidence` or `resolve_gap`.
+exec
+/bin/zsh -lc "rg -n \"delete\\(EvidenceItem\\)|session\\.delete\\(item\\)|EvidenceOrigin\\.inferred|ondelete=\\\"SET NULL\\\"\" apps/api/captureos -g '"'!**/__pycache__/**'"'" in /Users/anishguntreddi/Documents/hackathon
+ succeeded in 0ms:
+apps/api/captureos/services/evidence.py:109:                    origin=EvidenceOrigin.inferred.value,
+apps/api/captureos/services/company_brain.py:156:                    EvidenceItem.origin == EvidenceOrigin.inferred.value,
+apps/api/captureos/services/company_brain.py:164:        await session.delete(item)
+apps/api/captureos/services/company_brain.py:174:                origin=EvidenceOrigin.inferred.value,
+apps/api/captureos/models/evidence.py:27:        ForeignKey("documents.id", ondelete="SET NULL"),
+apps/api/captureos/models/evidence.py:52:        String(16), nullable=False, default=EvidenceOrigin.inferred.value
+apps/api/captureos/models/evidence.py:58:        ForeignKey("document_chunks.id", ondelete="SET NULL"),
+apps/api/captureos/models/filings.py:39:        PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+apps/api/captureos/models/filings.py:75:        PGUUID(as_uuid=True), ForeignKey("sources.id", ondelete="SET NULL"), nullable=True
+apps/api/captureos/models/filings.py:101:        ForeignKey("evidence_items.id", ondelete="SET NULL"),
+apps/api/captureos/models/filings.py:176:        PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+apps/api/captureos/models/opportunities.py:35:        ForeignKey("sources.id", ondelete="SET NULL"),
+
+exec
+/bin/zsh -lc "nl -ba apps/api/captureos/services/company_brain.py | sed -n '148,180p'" in /Users/anishguntreddi/Documents/hackathon
+ succeeded in 0ms:
+   148	    await session.flush()
+   149	
+   150	    # Replace inferred evidence from prior runs (keep user_provided), then materialize new.
+   151	    existing = (
+   152	        (
+   153	            await session.execute(
+   154	                select(EvidenceItem).where(
+   155	                    EvidenceItem.org_id == org_id,
+   156	                    EvidenceItem.origin == EvidenceOrigin.inferred.value,
+   157	                )
+   158	            )
+   159	        )
+   160	        .scalars()
+   161	        .all()
+   162	    )
+   163	    for item in existing:
+   164	        await session.delete(item)
+   165	
+   166	    fallback = source_ids["user_input"]
+   167	    for claim in output.evidence:
+   168	        session.add(
+   169	            EvidenceItem(
+   170	                org_id=org_id,
+   171	                type=claim.type,
+   172	                content=claim.content,
+   173	                source_id=source_ids.get(claim.source_kind, fallback),  # CON-2: always sourced
+   174	                origin=EvidenceOrigin.inferred.value,
+   175	                confidence=claim.confidence,
+   176	            )
+   177	        )
+   178	    await session.flush()
+   179	    ctx.merge_results(
+   180	        profileBuilt=True,
+
+exec
+/bin/zsh -lc "nl -ba apps/api/captureos/models/filings.py | sed -n '92,110p'" in /Users/anishguntreddi/Documents/hackathon
+ succeeded in 0ms:
+    92	    )
+    93	    requirement_id: Mapped[uuid.UUID] = mapped_column(
+    94	        PGUUID(as_uuid=True),
+    95	        ForeignKey("filing_requirements.id", ondelete="CASCADE"),
+    96	        nullable=False,
+    97	        index=True,
+    98	    )
+    99	    evidence_item_id: Mapped[uuid.UUID | None] = mapped_column(
+   100	        PGUUID(as_uuid=True),
+   101	        ForeignKey("evidence_items.id", ondelete="SET NULL"),
+   102	        nullable=True,
+   103	    )
+   104	    score: Mapped[float] = mapped_column(Numeric(5, 4), nullable=False, default=0)
+   105	    status: Mapped[str] = mapped_column(
+   106	        String(16), nullable=False, default=MatchStatus.missing.value, index=True
+   107	    )
+   108	    rationale: Mapped[str | None] = mapped_column(Text, nullable=True)
+   109	
+   110	    filing: Mapped[Filing] = relationship(back_populates="evidence_matches")
+
