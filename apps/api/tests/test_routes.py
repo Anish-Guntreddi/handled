@@ -19,6 +19,5 @@ def test_no_colon_action_routes() -> None:
         if ":" in without_params:
             offenders.append(path)
     assert not offenders, (
-        "colon-action routes are unsafe under uvicorn/httptools; use slash sub-paths: "
-        f"{offenders}"
+        f"colon-action routes are unsafe under uvicorn/httptools; use slash sub-paths: {offenders}"
     )

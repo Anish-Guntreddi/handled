@@ -1,8 +1,8 @@
-"""Filing routes (PRD §9.5): create, list, extract-requirements (202+poll), aggregate.
+"""Filing routes (PRD §9.5): create, list, the action sub-paths, and the full aggregate.
 
 Actions use slash sub-paths (e.g. ``/{filing_id}/extract-requirements``) rather than the PRD's
-colon-suffix style (``…:extract-requirements``): uvicorn's HTTP parser mangles a ``:`` inside a
-path segment for some action names, so the colon form is unreliable in production."""
+colon-suffix style: uvicorn's HTTP parser mangles a ``:`` inside a path segment for some action
+names, so the colon form is unreliable in production (see tests/test_routes.py)."""
 
 from __future__ import annotations
 
@@ -13,23 +13,33 @@ from sqlalchemy import select
 
 from captureos.audit import record_event
 from captureos.core.deps import OrgEditor, OrgViewer, SessionDep
-from captureos.core.errors import NotFoundError
-from captureos.models.enums import ActorType, WorkflowType
-from captureos.models.filings import Filing, FilingRequirement
+from captureos.core.errors import NotFoundError, ValidationFailed
+from captureos.models.enums import ActorType, ApprovalDecision, ApprovalTarget, WorkflowType
+from captureos.models.filings import Approval, Filing, FilingRequirement, Recommendation
 from captureos.models.opportunities import Opportunity
 from captureos.models.workflow import WorkflowRun
 from captureos.schemas.filing import (
+    ApprovalRequest,
+    ApprovalResponse,
+    ComplianceRow,
     FilingAggregate,
     FilingCreate,
     FilingResponse,
+    GapResolveRequest,
+    RecommendationResponse,
     RequirementResponse,
 )
 from captureos.schemas.opportunity import OpportunitySummary
 from captureos.schemas.workflow import WorkflowRunCreated
+from captureos.services.approvals import record_approval
+from captureos.services.compliance import build_compliance_matrix, gap_rows, match_summary
 from captureos.services.filings import create_filing
 from captureos.workflows.dispatch import dispatch_run
 
 router = APIRouter(prefix="/orgs/{org_id}/filings", tags=["filings"])
+
+_VALID_DECISIONS = {ApprovalDecision.approved.value, ApprovalDecision.rejected.value}
+_VALID_TARGETS = {ApprovalTarget.recommendation.value, ApprovalTarget.package.value}
 
 
 def _filing_response(filing: Filing) -> FilingResponse:
@@ -54,6 +64,27 @@ async def _get_filing_or_404(
     return filing
 
 
+async def _dispatch(
+    ctx: OrgEditor,
+    session: SessionDep,
+    background_tasks: BackgroundTasks,
+    filing: Filing,
+    wtype: str,
+    params: dict,
+) -> WorkflowRunCreated:
+    run = WorkflowRun(
+        org_id=ctx.org_id,
+        filing_id=filing.id,
+        type=wtype,
+        status="queued",
+        input_params={"filing_id": str(filing.id), **params},
+    )
+    session.add(run)
+    await session.flush()
+    await dispatch_run(session, background_tasks, run)
+    return WorkflowRunCreated(workflow_run_id=run.id)
+
+
 @router.post("", response_model=FilingResponse, status_code=status.HTTP_201_CREATED)
 async def create(body: FilingCreate, ctx: OrgEditor, session: SessionDep) -> FilingResponse:
     filing = await create_filing(session, ctx.org_id, body.opportunity_id, ctx.user.id)
@@ -71,10 +102,14 @@ async def create(body: FilingCreate, ctx: OrgEditor, session: SessionDep) -> Fil
 @router.get("", response_model=list[FilingResponse])
 async def list_filings(ctx: OrgViewer, session: SessionDep) -> list[FilingResponse]:
     filings = (
-        await session.execute(
-            select(Filing).where(Filing.org_id == ctx.org_id).order_by(Filing.created_at.desc())
+        (
+            await session.execute(
+                select(Filing).where(Filing.org_id == ctx.org_id).order_by(Filing.created_at.desc())
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     return [_filing_response(f) for f in filings]
 
 
@@ -87,17 +122,92 @@ async def extract_requirements(
     ctx: OrgEditor, session: SessionDep, background_tasks: BackgroundTasks, filing_id: uuid.UUID
 ) -> WorkflowRunCreated:
     filing = await _get_filing_or_404(session, ctx.org_id, filing_id)
-    run = WorkflowRun(
+    return await _dispatch(
+        ctx, session, background_tasks, filing, WorkflowType.requirement_extraction.value, {}
+    )
+
+
+@router.post(
+    "/{filing_id}/match-evidence",
+    response_model=WorkflowRunCreated,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def match_evidence(
+    ctx: OrgEditor, session: SessionDep, background_tasks: BackgroundTasks, filing_id: uuid.UUID
+) -> WorkflowRunCreated:
+    filing = await _get_filing_or_404(session, ctx.org_id, filing_id)
+    return await _dispatch(
+        ctx, session, background_tasks, filing, WorkflowType.evidence_match.value, {}
+    )
+
+
+@router.post(
+    "/{filing_id}/recommend",
+    response_model=WorkflowRunCreated,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def recommend(
+    ctx: OrgEditor, session: SessionDep, background_tasks: BackgroundTasks, filing_id: uuid.UUID
+) -> WorkflowRunCreated:
+    filing = await _get_filing_or_404(session, ctx.org_id, filing_id)
+    return await _dispatch(
+        ctx, session, background_tasks, filing, WorkflowType.recommendation.value, {}
+    )
+
+
+@router.post(
+    "/{filing_id}/gaps/{requirement_id}/resolve",
+    response_model=WorkflowRunCreated,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def resolve_gap(
+    body: GapResolveRequest,
+    ctx: OrgEditor,
+    session: SessionDep,
+    background_tasks: BackgroundTasks,
+    filing_id: uuid.UUID,
+    requirement_id: uuid.UUID,
+) -> WorkflowRunCreated:
+    if not body.value and not body.document_id:
+        raise ValidationFailed("Provide a value or a documentId to resolve the gap")
+    filing = await _get_filing_or_404(session, ctx.org_id, filing_id)
+    params: dict = {"requirement_id": str(requirement_id)}
+    if body.value:
+        params["value"] = body.value
+    if body.document_id:
+        params["document_id"] = str(body.document_id)
+    return await _dispatch(
+        ctx, session, background_tasks, filing, WorkflowType.gap_resolution.value, params
+    )
+
+
+@router.post("/{filing_id}/approvals", response_model=FilingResponse)
+async def approve(
+    body: ApprovalRequest, ctx: OrgEditor, session: SessionDep, filing_id: uuid.UUID
+) -> FilingResponse:
+    if body.decision not in _VALID_DECISIONS:
+        raise ValidationFailed(f"decision must be one of {sorted(_VALID_DECISIONS)}")
+    if body.target not in _VALID_TARGETS:
+        raise ValidationFailed(f"target must be one of {sorted(_VALID_TARGETS)}")
+    filing = await _get_filing_or_404(session, ctx.org_id, filing_id)
+    filing = await record_approval(
+        session,
+        ctx.org_id,
+        filing,
+        target=body.target,
+        decision=body.decision,
+        approver_user_id=ctx.user.id,
+        notes=body.notes,
+    )
+    await record_event(
+        "filing.approval",
         org_id=ctx.org_id,
         filing_id=filing.id,
-        type=WorkflowType.requirement_extraction.value,
-        status="queued",
-        input_params={"filing_id": str(filing.id)},
+        actor=ActorType.user,
+        actor_id=str(ctx.user.id),
+        payload={"target": body.target, "decision": body.decision},
     )
-    session.add(run)
-    await session.flush()
-    await dispatch_run(session, background_tasks, run)
-    return WorkflowRunCreated(workflow_run_id=run.id)
+    return _filing_response(filing)
 
 
 @router.get("/{filing_id}", response_model=FilingAggregate)
@@ -105,12 +215,36 @@ async def get_filing(ctx: OrgViewer, session: SessionDep, filing_id: uuid.UUID) 
     filing = await _get_filing_or_404(session, ctx.org_id, filing_id)
     opp = await session.get(Opportunity, filing.opportunity_id)
     requirements = (
-        await session.execute(
-            select(FilingRequirement)
-            .where(FilingRequirement.filing_id == filing_id)
-            .order_by(FilingRequirement.category, FilingRequirement.created_at)
+        (
+            await session.execute(
+                select(FilingRequirement)
+                .where(FilingRequirement.filing_id == filing_id)
+                .order_by(FilingRequirement.category, FilingRequirement.created_at)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
+
+    matrix = await build_compliance_matrix(session, filing_id)
+    compliance = [ComplianceRow(**row) for row in matrix]
+    gaps = [ComplianceRow(**row) for row in gap_rows(matrix)]
+
+    rec = (
+        await session.execute(select(Recommendation).where(Recommendation.filing_id == filing_id))
+    ).scalar_one_or_none()
+    approvals = (
+        (
+            await session.execute(
+                select(Approval)
+                .where(Approval.filing_id == filing_id)
+                .order_by(Approval.created_at)
+            )
+        )
+        .scalars()
+        .all()
+    )
+
     opp_summary = (
         OpportunitySummary(
             id=opp.id,
@@ -142,4 +276,23 @@ async def get_filing(ctx: OrgViewer, session: SessionDep, filing_id: uuid.UUID) 
         ],
         requirement_count=len(requirements),
         status=filing.status,
+        compliance_matrix=compliance,
+        gap_list=gaps,
+        match_summary=match_summary(matrix),
+        recommendation=(
+            RecommendationResponse(
+                decision=rec.decision,
+                score=float(rec.score) if rec.score is not None else None,
+                rationale=rec.rationale,
+                approved=rec.approved,
+            )
+            if rec is not None
+            else None
+        ),
+        approvals=[
+            ApprovalResponse(
+                target=a.target, decision=a.decision, notes=a.notes, created_at=a.created_at
+            )
+            for a in approvals
+        ],
     )

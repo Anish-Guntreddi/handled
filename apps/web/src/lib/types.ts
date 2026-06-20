@@ -114,10 +114,43 @@ export type RequirementResponse = {
   sourceId: string | null;
 };
 
+export type ComplianceRow = {
+  requirementId: string;
+  requirement: string;
+  category: string;
+  mandatory: boolean;
+  locator: string | null;
+  sourceId: string | null;
+  status: string;
+  score: number;
+  evidence: string | null;
+  evidenceItemId: string | null;
+  rationale: string | null;
+};
+
+export type RecommendationDetail = {
+  decision: string | null;
+  score: number | null;
+  rationale: { for: string[]; against: string[]; key_gaps: string[] } | null;
+  approved: boolean;
+};
+
+export type ApprovalItem = {
+  target: string;
+  decision: string;
+  notes: string | null;
+  createdAt?: string;
+};
+
 export type FilingAggregate = {
   filing: FilingResponse;
   opportunity: OpportunitySummary | null;
   requirements: RequirementResponse[];
   requirementCount: number;
   status: string;
+  complianceMatrix: ComplianceRow[];
+  gapList: ComplianceRow[];
+  matchSummary: Record<string, number>;
+  recommendation: RecommendationDetail | null;
+  approvals: ApprovalItem[];
 };

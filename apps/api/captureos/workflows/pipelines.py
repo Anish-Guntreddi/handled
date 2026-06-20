@@ -7,7 +7,10 @@ from captureos.models.enums import WorkflowType
 from captureos.models.workflow import WorkflowRun
 from captureos.services.company_brain import gather_company_sources, run_company_brain
 from captureos.services.documents import run_document_ingest
+from captureos.services.evidence import acquire_evidence, map_evidence
 from captureos.services.filings import run_requirement_extraction
+from captureos.services.gaps import resolve_gap
+from captureos.services.recommendation import build_recommendation
 from captureos.services.scan import (
     discover_opportunities,
     research_top_opportunities,
@@ -21,6 +24,9 @@ TIME_SAVED: dict[str, int] = {
     WorkflowType.document_ingest.value: 10,
     WorkflowType.opportunity_scan.value: 120,
     WorkflowType.requirement_extraction.value: 45,
+    WorkflowType.evidence_match.value: 90,
+    WorkflowType.recommendation.value: 30,
+    WorkflowType.gap_resolution.value: 15,
 }
 
 
@@ -63,11 +69,26 @@ def _requirement_extraction_pipeline(run: WorkflowRun) -> list[tuple[str, StepFn
     return [("extract_requirements", run_requirement_extraction)]
 
 
+def _evidence_match_pipeline(run: WorkflowRun) -> list[tuple[str, StepFn]]:
+    return [("evidence_acquisition", acquire_evidence), ("evidence_mapping", map_evidence)]
+
+
+def _recommendation_pipeline(run: WorkflowRun) -> list[tuple[str, StepFn]]:
+    return [("fit_recommendation", build_recommendation)]
+
+
+def _gap_resolution_pipeline(run: WorkflowRun) -> list[tuple[str, StepFn]]:
+    return [("resolve_gap", resolve_gap)]
+
+
 _PIPELINES = {
     WorkflowType.company_brain.value: _company_brain_pipeline,
     WorkflowType.document_ingest.value: _document_ingest_pipeline,
     WorkflowType.opportunity_scan.value: _opportunity_scan_pipeline,
     WorkflowType.requirement_extraction.value: _requirement_extraction_pipeline,
+    WorkflowType.evidence_match.value: _evidence_match_pipeline,
+    WorkflowType.recommendation.value: _recommendation_pipeline,
+    WorkflowType.gap_resolution.value: _gap_resolution_pipeline,
 }
 
 
