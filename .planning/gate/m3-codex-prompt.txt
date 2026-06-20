@@ -1,0 +1,16 @@
+Independent review of CaptureOS Phase M3 (grant scanner + Filings + requirement extraction).
+Spec: captureos-engineering-prd.md (FR-GR-1..4, FR-RE-1..3, CON-2/3/5). Review NEW code since
+the M2 gate: captureos/sources/grants_gov.py, registry kind-awareness, services/scan.py kind
+branching, captureos/agents/{grant,requirements}.py, captureos/services/filings.py,
+captureos/api/filings.py, schemas/filing.py, the requirement_extraction pipeline.
+
+Find REAL defects only (file:line, severity, fix). Prioritize:
+1. CON-5: filing create/list/aggregate/extract org-scoping; can a user file on or read another
+   org's opportunity/filing?
+2. FR-RE-2: missing/empty solicitation text → needs_input (flagged), never silent; schema-retry.
+3. FR-RE-3: requirement dedupe correctness; source_id citation on every requirement (CON-2).
+4. ReDoS / catastrophic backtracking in the extraction regexes; any injection via grant adapter
+   real HTTP body or scan params.
+5. Grant fit scoring bounds (0-100) and apply/review/no_apply mapping; kind-aware discovery/research.
+6. Any swallowed exception or lost run/status.
+End with a clear VERDICT and a must-fix list.

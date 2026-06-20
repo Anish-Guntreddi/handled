@@ -9,12 +9,24 @@ See: .planning/PROJECT.md (updated 2026-06-19)
 
 ## Current Position
 
-Phase: 4 of 7 (M3 Grant scanner + requirement extraction) — STARTING
-Plan: 1 of 1 (Phases 1–3 complete)
-Status: Phases 1–3 (M0/M1/M2) COMPLETE — gates passed. Ready to execute Phase 4.
-Last activity: 2026-06-19 — M2 built (durable queue+worker, GovCon scanner), gated, committed.
+Phase: 5 of 7 (M4 Evidence matching + recommendation) — STARTING
+Plan: 1 of 1 (Phases 1–4 complete)
+Status: Phases 1–4 (M0/M1/M2/M3) COMPLETE — gates passed. Ready to execute Phase 5.
+Last activity: 2026-06-19 — M3 built (grants, Filings, requirement extraction), gated, committed.
 
-Progress: [████░░░░░░] ~43% (3 of 7 phases)
+Progress: [██████░░░░] ~57% (4 of 7 phases)
+
+### Phase 4 (M3) — DONE ✅ (gate passed)
+Grants vertical (Grants.gov adapter; kind-aware discovery/scoring; GrantFitAgent apply/no_apply).
+Filings as first-class objects (create from opportunity). Requirement Extraction agent
+(deterministic rule-based mock + Gemini, bounded schema-retry) → sourced, categorized,
+deduped filing_requirements with needs_review + NeedsInput-when-no-text (FR-RE-2). 50 pytest +
+6 live uvicorn checks; ruff/mypy/web-build clean.
+**Production bug found+fixed:** the PRD's colon-action URL style (`/{id}:action`) is mangled by
+uvicorn/httptools for some action names (e.g. `:extract-requirements` → `xtract-requirements`,
+405). Converted ALL colon-actions to slash sub-paths (`/{id}/extract-requirements` etc.) across
+backend+tests+frontend; added test_routes.py guard. ASGITransport masked it — only the live
+uvicorn gate caught it.
 
 ### Phase 3 (M2) — DONE ✅ (gate passed)
 Durable DB-backed job queue (workflow_jobs, FOR UPDATE SKIP LOCKED, commit-then-publish,

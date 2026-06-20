@@ -17,7 +17,7 @@ async def _bootstrap_with_profile(client: AsyncClient, email: str) -> tuple[dict
     me = await client.get("/api/v1/auth/me", headers=headers)
     org_id = me.json()["orgs"][0]["orgId"]
     build = await client.post(
-        f"/api/v1/orgs/{org_id}/company-profile:build",
+        f"/api/v1/orgs/{org_id}/company-profile/build",
         json={"name": "Acme Robotics", "industry": "software and IT consulting"},
         headers=headers,
     )

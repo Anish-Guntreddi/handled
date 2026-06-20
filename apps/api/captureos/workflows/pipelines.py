@@ -7,6 +7,7 @@ from captureos.models.enums import WorkflowType
 from captureos.models.workflow import WorkflowRun
 from captureos.services.company_brain import gather_company_sources, run_company_brain
 from captureos.services.documents import run_document_ingest
+from captureos.services.filings import run_requirement_extraction
 from captureos.services.scan import (
     discover_opportunities,
     research_top_opportunities,
@@ -19,6 +20,7 @@ TIME_SAVED: dict[str, int] = {
     WorkflowType.company_brain.value: 60,
     WorkflowType.document_ingest.value: 10,
     WorkflowType.opportunity_scan.value: 120,
+    WorkflowType.requirement_extraction.value: 45,
 }
 
 
@@ -57,10 +59,15 @@ def _opportunity_scan_pipeline(run: WorkflowRun) -> list[tuple[str, StepFn]]:
     ]
 
 
+def _requirement_extraction_pipeline(run: WorkflowRun) -> list[tuple[str, StepFn]]:
+    return [("extract_requirements", run_requirement_extraction)]
+
+
 _PIPELINES = {
     WorkflowType.company_brain.value: _company_brain_pipeline,
     WorkflowType.document_ingest.value: _document_ingest_pipeline,
     WorkflowType.opportunity_scan.value: _opportunity_scan_pipeline,
+    WorkflowType.requirement_extraction.value: _requirement_extraction_pipeline,
 }
 
 

@@ -8,6 +8,7 @@ from captureos.api import (
     auth,
     company_profile,
     documents,
+    filings,
     health,
     opportunities,
     orgs,
@@ -23,3 +24,4 @@ api_router.include_router(documents.router)
 api_router.include_router(documents.blobs_router)
 api_router.include_router(workflows.router)
 api_router.include_router(opportunities.router)
+api_router.include_router(filings.router)

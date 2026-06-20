@@ -4288,3 +4288,310 @@ index cc12202..d039b9a 100644
 +        output_tokens=run.total_output_tokens,
 +    )
 
+exec
+/bin/zsh -lc "rg -n \"include_router\\(|opportunities\" apps/api/captureos/main.py apps/api/captureos/api/router.py" in /Users/anishguntreddi/Documents/hackathon
+ succeeded in 0ms:
+apps/api/captureos/api/router.py:12:    opportunities,
+apps/api/captureos/api/router.py:18:api_router.include_router(health.router)
+apps/api/captureos/api/router.py:19:api_router.include_router(auth.router)
+apps/api/captureos/api/router.py:20:api_router.include_router(orgs.router)
+apps/api/captureos/api/router.py:21:api_router.include_router(company_profile.router)
+apps/api/captureos/api/router.py:22:api_router.include_router(documents.router)
+apps/api/captureos/api/router.py:23:api_router.include_router(documents.blobs_router)
+apps/api/captureos/api/router.py:24:api_router.include_router(workflows.router)
+apps/api/captureos/api/router.py:25:api_router.include_router(opportunities.router)
+apps/api/captureos/main.py:75:    app.include_router(api_router, prefix="/api/v1")
+
+exec
+/bin/zsh -lc 'nl -ba apps/api/captureos/api/router.py' in /Users/anishguntreddi/Documents/hackathon
+ succeeded in 0ms:
+     1	"""Aggregates all v1 routers under /api/v1."""
+     2	
+     3	from __future__ import annotations
+     4	
+     5	from fastapi import APIRouter
+     6	
+     7	from captureos.api import (
+     8	    auth,
+     9	    company_profile,
+    10	    documents,
+    11	    health,
+    12	    opportunities,
+    13	    orgs,
+    14	    workflows,
+    15	)
+    16	
+    17	api_router = APIRouter()
+    18	api_router.include_router(health.router)
+    19	api_router.include_router(auth.router)
+    20	api_router.include_router(orgs.router)
+    21	api_router.include_router(company_profile.router)
+    22	api_router.include_router(documents.router)
+    23	api_router.include_router(documents.blobs_router)
+    24	api_router.include_router(workflows.router)
+    25	api_router.include_router(opportunities.router)
+
+exec
+/bin/zsh -lc "nl -ba apps/api/captureos/config.py | sed -n '1,220p'" in /Users/anishguntreddi/Documents/hackathon
+ succeeded in 0ms:
+     1	"""Central typed configuration.
+     2	
+     3	Everything cloud-related is selected here via env vars, so call sites depend only
+     4	on abstract provider interfaces (see ``captureos.providers``). This is the seam that
+     5	makes the system "local-first, cloud-ready" (PROJECT.md D1).
+     6	"""
+     7	
+     8	from __future__ import annotations
+     9	
+    10	from enum import StrEnum
+    11	from functools import lru_cache
+    12	from pathlib import Path
+    13	
+    14	from pydantic import field_validator, model_validator
+    15	from pydantic_settings import BaseSettings, SettingsConfigDict
+    16	
+    17	# Load the repo-root .env regardless of CWD (the app/alembic run from apps/api).
+    18	# In containers this path won't exist; real env vars are used instead.
+    19	_ROOT_ENV = Path(__file__).resolve().parents[3] / ".env"
+    20	
+    21	
+    22	class AppEnv(StrEnum):
+    23	    local = "local"
+    24	    ci = "ci"
+    25	    staging = "staging"
+    26	    production = "production"
+    27	
+    28	
+    29	class AuthProviderName(StrEnum):
+    30	    local = "local"
+    31	    firebase = "firebase"
+    32	
+    33	
+    34	class LLMProviderName(StrEnum):
+    35	    mock = "mock"
+    36	    gemini = "gemini"
+    37	
+    38	
+    39	class EmbeddingsProviderName(StrEnum):
+    40	    mock = "mock"
+    41	    gemini = "gemini"
+    42	
+    43	
+    44	class StorageProviderName(StrEnum):
+    45	    local = "local"
+    46	    gcs = "gcs"
+    47	
+    48	
+    49	class QueueProviderName(StrEnum):
+    50	    local = "local"
+    51	    pubsub = "pubsub"
+    52	
+    53	
+    54	class DocparseProviderName(StrEnum):
+    55	    local = "local"
+    56	    docai = "docai"
+    57	
+    58	
+    59	class AuditSinkName(StrEnum):
+    60	    postgres = "postgres"
+    61	    bigquery = "bigquery"
+    62	
+    63	
+    64	class SecretsBackendName(StrEnum):
+    65	    env = "env"
+    66	    gcp_secret_manager = "gcp_secret_manager"  # noqa: S105 - enum value, not a secret
+    67	
+    68	
+    69	class BillingProviderName(StrEnum):
+    70	    mock = "mock"
+    71	    stripe = "stripe"
+    72	
+    73	
+    74	class Settings(BaseSettings):
+    75	    model_config = SettingsConfigDict(
+    76	        env_file=(str(_ROOT_ENV), ".env"),
+    77	        env_file_encoding="utf-8",
+    78	        extra="ignore",
+    79	        case_sensitive=False,
+    80	    )
+    81	
+    82	    # ---- Core ----
+    83	    captureos_env: AppEnv = AppEnv.local
+    84	    log_level: str = "INFO"
+    85	    api_host: str = "0.0.0.0"  # noqa: S104 — containerized service binds all interfaces
+    86	    api_port: int = 8000
+    87	    cors_allow_origins: str = "http://localhost:3000"
+    88	
+    89	    # ---- Auth ----
+    90	    auth_provider: AuthProviderName = AuthProviderName.local
+    91	    jwt_secret: str = "dev-only-insecure-change-me-please-32chars-min"  # noqa: S105
+    92	    jwt_algorithm: str = "HS256"
+    93	    jwt_access_ttl_minutes: int = 60
+    94	    jwt_refresh_ttl_days: int = 14
+    95	    firebase_project_id: str | None = None
+    96	    google_application_credentials: str | None = None
+    97	
+    98	    # ---- Database ----
+    99	    database_url: str = "postgresql+asyncpg://captureos:captureos@localhost:5432/captureos"
+   100	    database_url_sync: str = "postgresql+psycopg://captureos:captureos@localhost:5432/captureos"
+   101	    db_echo: bool = False
+   102	    run_migrations_on_start: bool = False
+   103	
+   104	    # ---- LLM ----
+   105	    llm_provider: LLMProviderName = LLMProviderName.mock
+   106	    gemini_api_key: str | None = None
+   107	    gemini_model_pro: str = "gemini-2.5-pro"
+   108	    gemini_model_flash: str = "gemini-2.5-flash"
+   109	    llm_timeout_seconds: int = 60
+   110	    llm_max_retries: int = 2
+   111	
+   112	    # ---- Embeddings ----
+   113	    embeddings_provider: EmbeddingsProviderName = EmbeddingsProviderName.mock
+   114	    embedding_model: str = "text-embedding-004"
+   115	    embedding_dim: int = 768
+   116	
+   117	    # ---- Storage ----
+   118	    storage_provider: StorageProviderName = StorageProviderName.local
+   119	    storage_local_dir: str = "./.data/blobs"
+   120	    gcs_bucket: str | None = None
+   121	
+   122	    # ---- Queue ----
+   123	    queue_provider: QueueProviderName = QueueProviderName.local
+   124	    pubsub_project_id: str | None = None
+   125	    pubsub_topic: str = "captureos-workflow-steps"
+   126	
+   127	    # ---- Docparse ----
+   128	    docparse_provider: DocparseProviderName = DocparseProviderName.local
+   129	    docai_processor_id: str | None = None
+   130	    docai_location: str = "us"
+   131	
+   132	    # ---- Audit ----
+   133	    audit_sink: AuditSinkName = AuditSinkName.postgres
+   134	    bigquery_dataset: str = "captureos_audit"
+   135	    bigquery_table: str = "events"
+   136	
+   137	    # ---- Secrets ----
+   138	    secrets_backend: SecretsBackendName = SecretsBackendName.env
+   139	    gcp_project_id: str | None = None
+   140	
+   141	    # ---- Billing ----
+   142	    billing_provider: BillingProviderName = BillingProviderName.mock
+   143	    stripe_secret_key: str | None = None
+   144	    stripe_webhook_secret: str | None = None
+   145	    stripe_price_audit: str | None = None
+   146	    stripe_price_sprint: str | None = None
+   147	    stripe_price_autopilot: str | None = None
+   148	
+   149	    # ---- External sources ----
+   150	    sam_gov_api_key: str | None = None
+   151	    grants_gov_base_url: str = "https://api.grants.gov/v1/api"
+   152	    usaspending_base_url: str = "https://api.usaspending.gov/api/v2"
+   153	    source_fetch_cache_ttl_seconds: int = 86400
+   154	    source_fetch_rate_limit_per_min: int = 30
+   155	
+   156	    # ---- Cost guard ----
+   157	    workflow_token_budget: int = 200_000
+   158	
+   159	    # ---- Workflow queue / worker ----
+   160	    # When true (default), the API drains the durable job queue in-process via a background
+   161	    # task, so workflows run with no separate worker. Set false in production and run the
+   162	    # dedicated worker (`python -m captureos.worker.main`) for scale + isolation.
+   163	    workflow_inline_worker: bool = True
+   164	    worker_poll_interval_seconds: float = 2.0
+   165	    worker_max_attempts: int = 3
+   166	
+   167	    @field_validator("cors_allow_origins")
+   168	    @classmethod
+   169	    def _strip_origins(cls, v: str) -> str:
+   170	        return v.strip()
+   171	
+   172	    @property
+   173	    def cors_origins_list(self) -> list[str]:
+   174	        return [o.strip() for o in self.cors_allow_origins.split(",") if o.strip()]
+   175	
+   176	    @property
+   177	    def is_production_like(self) -> bool:
+   178	        return self.captureos_env in (AppEnv.staging, AppEnv.production)
+   179	
+   180	    @model_validator(mode="after")
+   181	    def _guard_production_secrets(self) -> Settings:
+   182	        """Fail fast if a prod-like env still uses insecure defaults (CON-4)."""
+   183	        if self.is_production_like:
+   184	            if "insecure" in self.jwt_secret or len(self.jwt_secret) < 32:
+   185	                raise ValueError(
+   186	                    "JWT_SECRET must be a strong, non-default value (>=32 chars) in production"
+   187	                )
+   188	            if self.auth_provider is AuthProviderName.firebase and not self.firebase_project_id:
+   189	                raise ValueError("FIREBASE_PROJECT_ID required when AUTH_PROVIDER=firebase")
+   190	            if self.llm_provider is LLMProviderName.gemini and not self.gemini_api_key:
+   191	                raise ValueError("GEMINI_API_KEY required when LLM_PROVIDER=gemini")
+   192	        return self
+   193	
+   194	
+   195	@lru_cache
+   196	def get_settings() -> Settings:
+   197	    return Settings()
+
+codex
+The review is converging on a small set of substantive issues, mostly around the queue lease/reaper semantics, silent adapter failure handling, and a couple of spec mismatches in the scan pipeline. I’m packaging them with exact file references and fixes now.
+  ✓ Inspect the M2 files and migration to map queue, scan, API, and adapter flows
+  ✓ Trace queue correctness, failure handling, token accounting, scoring, and org isolation against the spec
+  → Produce findings with severity, file:line, fixes, verdict, and must-fix list
+codex
+**Findings**
+1. High — [queue.py](/Users/anishguntreddi/Documents/hackathon/apps/api/captureos/workflows/queue.py:39), [queue.py](/Users/anishguntreddi/Documents/hackathon/apps/api/captureos/workflows/queue.py:61), [engine.py](/Users/anishguntreddi/Documents/hackathon/apps/api/captureos/workflows/engine.py:89), [engine.py](/Users/anishguntreddi/Documents/hackathon/apps/api/captureos/workflows/engine.py:97): the reaper can duplicate real work. `locked_at` is set once on claim and never heartbeated, so any run that legitimately lasts longer than the 300s stale threshold can be re-queued while the first worker is still executing. The same reaper also re-queues jobs whose run already committed `failed`/`needs_input`/`succeeded` but whose job row was never finalized, and `run_pipeline()` resets the run to `running` and re-executes every non-`done` step. Fix: add lease heartbeats/renewals, have the reaper join `workflow_runs` and only re-queue non-terminal runs with expired leases, and no-op execution when a run is already terminal.
+
+2. High — [sam_gov.py](/Users/anishguntreddi/Documents/hackathon/apps/api/captureos/sources/sam_gov.py:114), [usaspending.py](/Users/anishguntreddi/Documents/hackathon/apps/api/captureos/sources/usaspending.py:84), [scan.py](/Users/anishguntreddi/Documents/hackathon/apps/api/captureos/services/scan.py:62), [scan.py](/Users/anishguntreddi/Documents/hackathon/apps/api/captureos/services/scan.py:104): adapter failures are swallowed instead of surfaced. A live SAM.gov failure becomes `[]`, and with only one contract adapter that yields a `succeeded` scan with zero opportunities and no client-visible error. A live USAspending failure silently substitutes mock award history, so the stored “research” can look authoritative even though the real fetch failed. Fix: propagate structured source errors, persist them on the run/audit trail, fail the step when all discovery sources fail, and explicitly mark degraded fallback data.
+
+3. High — [pipelines.py](/Users/anishguntreddi/Documents/hackathon/apps/api/captureos/workflows/pipelines.py:53), [scan.py](/Users/anishguntreddi/Documents/hackathon/apps/api/captureos/services/scan.py:144), [opportunity.py](/Users/anishguntreddi/Documents/hackathon/apps/api/captureos/schemas/opportunity.py:36): FR-GC-4 is not implemented. The pipeline stops after discovery, research, and fit scoring; it never generates required documents, missing evidence, a compliance matrix stub, a proposal outline, or a submission checklist per opportunity. Fix: add a post-scoring step/agent that produces and persists those artifacts, or do not mark M2 complete against FR-GC-4.
+
+4. Medium — [engine.py](/Users/anishguntreddi/Documents/hackathon/apps/api/captureos/workflows/engine.py:104), [engine.py](/Users/anishguntreddi/Documents/hackathon/apps/api/captureos/workflows/engine.py:133): token rollups are wrong for failed and `needs_input` runs. Both early-return paths exit before the aggregate query, so `agent_runs` can record token usage while `workflow_runs.total_input_tokens/total_output_tokens` remain zero. Fix: move the rollup into finalization that runs for every terminal state, not only success.
+
+5. Medium — [scan.py](/Users/anishguntreddi/Documents/hackathon/apps/api/captureos/services/scan.py:108), [pipelines.py](/Users/anishguntreddi/Documents/hackathon/apps/api/captureos/workflows/pipelines.py:47): FR-GC-2 is applied to the first five discovered opportunities, not the top-ranked five. Research runs before scoring and slices `state["opportunity_ids"][:5]`, so a higher-fit opportunity found later can be missing USAspending research while a lower-fit early item has it. Fix: score first and then research the highest-ranked IDs, or research all opportunities if the volume is bounded.
+
+6. Medium — [opportunity.py](/Users/anishguntreddi/Documents/hackathon/apps/api/captureos/agents/opportunity.py:107), [scan.py](/Users/anishguntreddi/Documents/hackathon/apps/api/captureos/services/scan.py:177): live fit scoring is not validated. `FitScoringOutput` accepts any `float` and any `str`, and those values are written straight to `Opportunity.fit_score` and `decision_hint`. In Gemini mode, `150` or `"maybe"` will validate and leak to the API. Fix: constrain the schema with `Field(ge=0, le=100)` and `Literal["bid","review","no_bid"]` or enums, and reject/repair invalid model output before persistence.
+
+7. Medium — [opportunity.py](/Users/anishguntreddi/Documents/hackathon/apps/api/captureos/schemas/opportunity.py:13), [scan.py](/Users/anishguntreddi/Documents/hackathon/apps/api/captureos/services/scan.py:52), [registry.py](/Users/anishguntreddi/Documents/hackathon/apps/api/captureos/sources/registry.py:10): `kind` is accepted but not enforced. The request schema allows arbitrary strings, `discover_opportunities()` always uses contract adapters, and the created opportunities are saved with whatever `kind` the caller supplied. A `kind="grant"` request therefore produces SAM.gov contract rows mislabeled as grants. Fix: make `kind` an `OpportunityKind` enum and dispatch adapters by kind, or reject unsupported kinds until grant sources exist.
+
+**Verdict**
+M2 is not gate-ready. The queue lease/reaper semantics can duplicate runs, adapter failures are hidden instead of surfaced, and FR-GC-4 is still missing.
+
+I did not find a direct cross-org read leak on the reviewed opportunity routes or an exposed `agent_runs` read path in these files, and I did not find a request-driven SSRF path in the reviewed adapters. I could not run `pytest` here because the sandbox has no usable writable temp directory, so this review is from code inspection.
+
+**Must-Fix**
+- Fix the queue lease/reaper design so active jobs cannot be re-queued and terminal runs cannot be replayed.
+- Surface source-adapter failures in run state/audit state; stop returning silent empty scans or silent mock research.
+- Implement FR-GC-4 outputs before treating the phase as complete.
+- Correct token rollups for non-success terminal states.
+- Validate fit-score/decision outputs and enforce `kind` semantics.
+
+tokens used
+103,380
+**Findings**
+1. High — [queue.py](/Users/anishguntreddi/Documents/hackathon/apps/api/captureos/workflows/queue.py:39), [queue.py](/Users/anishguntreddi/Documents/hackathon/apps/api/captureos/workflows/queue.py:61), [engine.py](/Users/anishguntreddi/Documents/hackathon/apps/api/captureos/workflows/engine.py:89), [engine.py](/Users/anishguntreddi/Documents/hackathon/apps/api/captureos/workflows/engine.py:97): the reaper can duplicate real work. `locked_at` is set once on claim and never heartbeated, so any run that legitimately lasts longer than the 300s stale threshold can be re-queued while the first worker is still executing. The same reaper also re-queues jobs whose run already committed `failed`/`needs_input`/`succeeded` but whose job row was never finalized, and `run_pipeline()` resets the run to `running` and re-executes every non-`done` step. Fix: add lease heartbeats/renewals, have the reaper join `workflow_runs` and only re-queue non-terminal runs with expired leases, and no-op execution when a run is already terminal.
+
+2. High — [sam_gov.py](/Users/anishguntreddi/Documents/hackathon/apps/api/captureos/sources/sam_gov.py:114), [usaspending.py](/Users/anishguntreddi/Documents/hackathon/apps/api/captureos/sources/usaspending.py:84), [scan.py](/Users/anishguntreddi/Documents/hackathon/apps/api/captureos/services/scan.py:62), [scan.py](/Users/anishguntreddi/Documents/hackathon/apps/api/captureos/services/scan.py:104): adapter failures are swallowed instead of surfaced. A live SAM.gov failure becomes `[]`, and with only one contract adapter that yields a `succeeded` scan with zero opportunities and no client-visible error. A live USAspending failure silently substitutes mock award history, so the stored “research” can look authoritative even though the real fetch failed. Fix: propagate structured source errors, persist them on the run/audit trail, fail the step when all discovery sources fail, and explicitly mark degraded fallback data.
+
+3. High — [pipelines.py](/Users/anishguntreddi/Documents/hackathon/apps/api/captureos/workflows/pipelines.py:53), [scan.py](/Users/anishguntreddi/Documents/hackathon/apps/api/captureos/services/scan.py:144), [opportunity.py](/Users/anishguntreddi/Documents/hackathon/apps/api/captureos/schemas/opportunity.py:36): FR-GC-4 is not implemented. The pipeline stops after discovery, research, and fit scoring; it never generates required documents, missing evidence, a compliance matrix stub, a proposal outline, or a submission checklist per opportunity. Fix: add a post-scoring step/agent that produces and persists those artifacts, or do not mark M2 complete against FR-GC-4.
+
+4. Medium — [engine.py](/Users/anishguntreddi/Documents/hackathon/apps/api/captureos/workflows/engine.py:104), [engine.py](/Users/anishguntreddi/Documents/hackathon/apps/api/captureos/workflows/engine.py:133): token rollups are wrong for failed and `needs_input` runs. Both early-return paths exit before the aggregate query, so `agent_runs` can record token usage while `workflow_runs.total_input_tokens/total_output_tokens` remain zero. Fix: move the rollup into finalization that runs for every terminal state, not only success.
+
+5. Medium — [scan.py](/Users/anishguntreddi/Documents/hackathon/apps/api/captureos/services/scan.py:108), [pipelines.py](/Users/anishguntreddi/Documents/hackathon/apps/api/captureos/workflows/pipelines.py:47): FR-GC-2 is applied to the first five discovered opportunities, not the top-ranked five. Research runs before scoring and slices `state["opportunity_ids"][:5]`, so a higher-fit opportunity found later can be missing USAspending research while a lower-fit early item has it. Fix: score first and then research the highest-ranked IDs, or research all opportunities if the volume is bounded.
+
+6. Medium — [opportunity.py](/Users/anishguntreddi/Documents/hackathon/apps/api/captureos/agents/opportunity.py:107), [scan.py](/Users/anishguntreddi/Documents/hackathon/apps/api/captureos/services/scan.py:177): live fit scoring is not validated. `FitScoringOutput` accepts any `float` and any `str`, and those values are written straight to `Opportunity.fit_score` and `decision_hint`. In Gemini mode, `150` or `"maybe"` will validate and leak to the API. Fix: constrain the schema with `Field(ge=0, le=100)` and `Literal["bid","review","no_bid"]` or enums, and reject/repair invalid model output before persistence.
+
+7. Medium — [opportunity.py](/Users/anishguntreddi/Documents/hackathon/apps/api/captureos/schemas/opportunity.py:13), [scan.py](/Users/anishguntreddi/Documents/hackathon/apps/api/captureos/services/scan.py:52), [registry.py](/Users/anishguntreddi/Documents/hackathon/apps/api/captureos/sources/registry.py:10): `kind` is accepted but not enforced. The request schema allows arbitrary strings, `discover_opportunities()` always uses contract adapters, and the created opportunities are saved with whatever `kind` the caller supplied. A `kind="grant"` request therefore produces SAM.gov contract rows mislabeled as grants. Fix: make `kind` an `OpportunityKind` enum and dispatch adapters by kind, or reject unsupported kinds until grant sources exist.
+
+**Verdict**
+M2 is not gate-ready. The queue lease/reaper semantics can duplicate runs, adapter failures are hidden instead of surfaced, and FR-GC-4 is still missing.
+
+I did not find a direct cross-org read leak on the reviewed opportunity routes or an exposed `agent_runs` read path in these files, and I did not find a request-driven SSRF path in the reviewed adapters. I could not run `pytest` here because the sandbox has no usable writable temp directory, so this review is from code inspection.
+
+**Must-Fix**
+- Fix the queue lease/reaper design so active jobs cannot be re-queued and terminal runs cannot be replayed.
+- Surface source-adapter failures in run state/audit state; stop returning silent empty scans or silent mock research.
+- Implement FR-GC-4 outputs before treating the phase as complete.
+- Correct token rollups for non-success terminal states.
+- Validate fit-score/decision outputs and enforce `kind` semantics.
+
+EXIT=0

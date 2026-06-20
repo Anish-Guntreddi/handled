@@ -69,7 +69,7 @@ async def _get_doc_or_404(
     return doc
 
 
-@router.post(":initiate-upload", response_model=InitiateUploadResponse)
+@router.post("/initiate-upload", response_model=InitiateUploadResponse)
 async def initiate_upload(
     body: InitiateUploadRequest, ctx: OrgEditor, session: SessionDep
 ) -> InitiateUploadResponse:
@@ -143,7 +143,7 @@ async def get_blob(ctx: OrgViewer, rel_key: str) -> Response:
 
 
 @router.post(
-    "/{document_id}:ingest", response_model=WorkflowRunCreated, status_code=status.HTTP_202_ACCEPTED
+    "/{document_id}/ingest", response_model=WorkflowRunCreated, status_code=status.HTTP_202_ACCEPTED
 )
 async def ingest_document(
     body: IngestRequest,
@@ -168,7 +168,7 @@ async def ingest_document(
     return WorkflowRunCreated(workflow_run_id=run.id)
 
 
-@router.post(":paste", response_model=WorkflowRunCreated, status_code=status.HTTP_202_ACCEPTED)
+@router.post("/paste", response_model=WorkflowRunCreated, status_code=status.HTTP_202_ACCEPTED)
 async def paste_document(
     body: PasteRequest, ctx: OrgEditor, session: SessionDep, background_tasks: BackgroundTasks
 ) -> WorkflowRunCreated:
