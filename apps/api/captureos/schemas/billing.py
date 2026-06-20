@@ -14,6 +14,9 @@ class CheckoutResponse(CamelModel):
     url: str
     product: str
     amount_cents: int
+    # True when the upgrade is already applied (mock mode); False when a real provider webhook
+    # will fulfill it asynchronously (Stripe).
+    completed: bool = False
 
 
 class BillingStatus(CamelModel):

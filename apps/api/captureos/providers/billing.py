@@ -1,12 +1,12 @@
-"""Billing providers (FR-BL-*). Mock by default; Stripe in production.
+"""Billing providers (FR-BL-*). Mock by default (local/dev); Stripe in production.
 
-Webhooks are authenticated by signature server-side (CON-4) — the secret never reaches a client.
-The mock provider is for local/dev only: it produces deterministic sessions and accepts its own
-self-describing webhook payloads so the full checkout→webhook→entitlement loop runs offline."""
+Webhooks are authenticated by provider signature server-side (CON-4) — the secret never reaches a
+client. The mock provider deliberately accepts NO webhooks: there is no signature to verify offline,
+so an open webhook would be an unauthenticated privilege-escalation vector. In mock mode a purchase
+is instead fulfilled inline by the authenticated, org-scoped checkout endpoint (see api/billing.py)
+— a request that can only ever upgrade the caller's own org."""
 
 from __future__ import annotations
-
-import json
 
 from captureos.config import Settings
 from captureos.providers.base import CheckoutSession
@@ -30,22 +30,8 @@ class MockBilling:
         )
 
     def verify_and_parse_webhook(self, payload: bytes, signature: str | None) -> dict | None:
-        # Local/dev: no real signature. The payload is the event itself.
-        try:
-            event = json.loads(payload.decode("utf-8"))
-        except (json.JSONDecodeError, UnicodeDecodeError):
-            return None
-        if not isinstance(event, dict) or "org_id" not in event or "product" not in event:
-            return None
-        return {
-            "type": event.get("type", "checkout.completed"),
-            "org_id": str(event["org_id"]),
-            "product": str(event["product"]),
-            "amount_cents": int(event.get("amount_cents", 0)),
-            "external_id": str(
-                event.get("external_id") or f"mock_evt_{event['org_id']}_{event['product']}"
-            ),
-        }
+        # The mock provider has no authenticatable webhook; reject everything (fail closed).
+        return None
 
 
 class StripeBilling:  # pragma: no cover - requires Stripe credentials

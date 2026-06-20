@@ -102,6 +102,7 @@ export type CheckoutResponse = {
   url: string;
   product: string;
   amountCents: number;
+  completed: boolean;
 };
 
 export type WorkflowRun = {

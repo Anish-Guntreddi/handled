@@ -118,15 +118,14 @@ async def metrics(session: AsyncSession, org_id: uuid.UUID) -> dict:
     ).one()
     total_runs, time_saved, input_tokens, output_tokens = run_rows
 
-    by_type = dict(
-        (
-            await session.execute(
-                select(WorkflowRun.type, func.count())
-                .where(WorkflowRun.org_id == org_id)
-                .group_by(WorkflowRun.type)
-            )
-        ).all()
-    )
+    type_rows = (
+        await session.execute(
+            select(WorkflowRun.type, func.count())
+            .where(WorkflowRun.org_id == org_id)
+            .group_by(WorkflowRun.type)
+        )
+    ).all()
+    by_type: dict[str, int] = {row[0]: row[1] for row in type_rows}
     succeeded = (
         await session.execute(
             select(func.count(WorkflowRun.id)).where(
