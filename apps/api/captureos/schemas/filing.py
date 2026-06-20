@@ -71,6 +71,26 @@ class ApprovalRequest(CamelModel):
     notes: str | None = None
 
 
+class GeneratedDocSummary(CamelModel):
+    id: uuid.UUID
+    type: str
+    version: int
+    status: str
+    citation_validated: bool = False
+    citation_count: int = 0
+    content_md: str | None = None  # populated in the package view, omitted from the aggregate
+
+
+class PackageView(CamelModel):
+    filing_id: uuid.UUID
+    status: str
+    version: int | None = None
+    documents: list[GeneratedDocSummary] = []
+    all_citations_valid: bool = False
+    can_approve: bool = False  # status == package_review AND every document citation-validated
+    can_export: bool = False  # status == ready (package approved)
+
+
 class FilingAggregate(CamelModel):
     filing: FilingResponse
     opportunity: OpportunitySummary | None = None
@@ -82,3 +102,5 @@ class FilingAggregate(CamelModel):
     match_summary: dict = {}
     recommendation: RecommendationResponse | None = None
     approvals: list[ApprovalResponse] = []
+    generated_documents: list[GeneratedDocSummary] = []
+    package_ready: bool = False  # status == ready (export-eligible)

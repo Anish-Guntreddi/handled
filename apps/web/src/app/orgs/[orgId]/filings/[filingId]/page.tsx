@@ -5,9 +5,15 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { ApiError, apiFetch, pollWorkflowRun } from "@/lib/api";
+import { ApiError, apiDownload, apiFetch, pollWorkflowRun } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import type { ComplianceRow, FilingAggregate, WorkflowRunCreated } from "@/lib/types";
+import type {
+  ComplianceRow,
+  FilingAggregate,
+  GeneratedDocSummary,
+  PackageView,
+  WorkflowRunCreated,
+} from "@/lib/types";
 
 const STATUS_STYLE: Record<string, string> = {
   matched: "bg-emerald-100 text-emerald-800",
@@ -56,14 +62,29 @@ export default function FilingPage() {
     mutationFn: () => runAction(orgId, filingId, "recommend"),
     onSuccess: refresh,
   });
+  const buildPackage = useMutation({
+    mutationFn: () => runAction(orgId, filingId, "build-package"),
+    onSuccess: refreshAll,
+  });
+
+  const pkgQuery = useQuery({
+    queryKey: ["package", orgId, filingId],
+    queryFn: () => apiFetch<PackageView>(`/orgs/${orgId}/filings/${filingId}/package`),
+    enabled: isAuthenticated,
+  });
+  function refreshAll() {
+    refresh();
+    queryClient.invalidateQueries({ queryKey: ["package", orgId, filingId] });
+  }
 
   const approve = useMutation({
-    mutationFn: (decision: "approved" | "rejected") =>
-      apiFetch(`/orgs/${orgId}/filings/${filingId}/approvals`, {
-        method: "POST",
-        body: { target: "recommendation", decision },
-      }),
-    onSuccess: refresh,
+    mutationFn: (vars: { target: "recommendation" | "package"; decision: "approved" | "rejected" }) =>
+      apiFetch(`/orgs/${orgId}/filings/${filingId}/approvals`, { method: "POST", body: vars }),
+    onSuccess: refreshAll,
+  });
+  const exportPkg = useMutation({
+    mutationFn: (format: "md" | "pdf" | "docx") =>
+      apiDownload(`/orgs/${orgId}/filings/${filingId}/export?format=${format}`),
   });
 
   if (loading || !isAuthenticated || query.isLoading) {
@@ -110,6 +131,12 @@ export default function FilingPage() {
           disabled={d.complianceMatrix.length === 0}
           done={!!rec}
         />
+        <ActionButton
+          label="4. Build package"
+          mut={buildPackage}
+          disabled={!(rec?.approved || ["packaging", "package_review", "ready"].includes(d.status))}
+          done={d.generatedDocuments.length > 0}
+        />
       </div>
 
       {/* Recommendation */}
@@ -143,14 +170,14 @@ export default function FilingPage() {
             ) : (
               <>
                 <button
-                  onClick={() => approve.mutate("approved")}
+                  onClick={() => approve.mutate({ target: "recommendation", decision: "approved" })}
                   disabled={approve.isPending}
                   className="rounded-lg bg-neutral-900 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-700 disabled:opacity-50"
                 >
                   Approve recommendation
                 </button>
                 <button
-                  onClick={() => approve.mutate("rejected")}
+                  onClick={() => approve.mutate({ target: "recommendation", decision: "rejected" })}
                   disabled={approve.isPending}
                   className="rounded-lg border border-neutral-300 px-4 py-2 text-sm hover:bg-neutral-100 disabled:opacity-50"
                 >
@@ -159,6 +186,56 @@ export default function FilingPage() {
               </>
             )}
             <span className="text-xs text-neutral-400">A human approves before pursuit (CON-1).</span>
+          </div>
+        </section>
+      )}
+
+      {/* Package */}
+      {pkgQuery.data && pkgQuery.data.documents.length > 0 && (
+        <section className="mb-6 rounded-2xl border border-neutral-200 bg-white p-6">
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-medium uppercase tracking-wide text-neutral-500">
+              Filing package (v{pkgQuery.data.version})
+            </h2>
+            {pkgQuery.data.allCitationsValid ? (
+              <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-medium text-emerald-800">
+                ✓ All claims cited
+              </span>
+            ) : (
+              <span className="rounded-full bg-red-100 px-3 py-1 text-xs font-medium text-red-700">
+                Unsourced claims — cannot export
+              </span>
+            )}
+          </div>
+          <ul className="mt-3 space-y-2">
+            {pkgQuery.data.documents.map((doc) => (
+              <PackageDoc key={doc.id} doc={doc} />
+            ))}
+          </ul>
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            {pkgQuery.data.canApprove && (
+              <button
+                onClick={() => approve.mutate({ target: "package", decision: "approved" })}
+                disabled={approve.isPending}
+                className="rounded-lg bg-neutral-900 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-700 disabled:opacity-50"
+              >
+                Approve package for export
+              </button>
+            )}
+            {(["md", "pdf", "docx"] as const).map((fmt) => (
+              <button
+                key={fmt}
+                onClick={() => exportPkg.mutate(fmt)}
+                disabled={!pkgQuery.data?.canExport || exportPkg.isPending}
+                title={pkgQuery.data?.canExport ? "" : "Approve the package first"}
+                className="rounded-lg border border-neutral-300 px-3 py-2 text-sm font-medium hover:bg-neutral-100 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Export {fmt.toUpperCase()}
+              </button>
+            ))}
+            <span className="text-xs text-neutral-400">
+              Export downloads a file; nothing is ever auto-submitted (CON-1).
+            </span>
           </div>
         </section>
       )}
@@ -217,6 +294,31 @@ export default function FilingPage() {
         )}
       </section>
     </main>
+  );
+}
+
+function PackageDoc({ doc }: { doc: GeneratedDocSummary }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <li className="rounded-lg border border-neutral-200">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center justify-between px-3 py-2 text-left text-sm"
+      >
+        <span className="font-medium capitalize">{doc.type.replace(/_/g, " ")}</span>
+        <span className="flex items-center gap-2 text-xs">
+          <span className={doc.citationValidated ? "text-emerald-700" : "text-red-600"}>
+            {doc.citationValidated ? `✓ ${doc.citationCount} cited` : "unsourced"}
+          </span>
+          <span className="text-neutral-400">{open ? "▲" : "▼"}</span>
+        </span>
+      </button>
+      {open && (
+        <pre className="max-h-72 overflow-auto whitespace-pre-wrap border-t border-neutral-100 bg-neutral-50 px-3 py-2 text-xs text-neutral-700">
+          {doc.contentMd ?? "(no content)"}
+        </pre>
+      )}
+    </li>
   );
 }
 

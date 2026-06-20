@@ -11,7 +11,7 @@ Seven phases map 1:1 to the PRD's delivery milestones M0–M6. The workflow engi
 - [x] **Phase 3: M2 GovCon Scanner + Workflow Engine** — Async engine; discover/research/score contracts. ✅ (2026-06-19, gate passed)
 - [x] **Phase 4: M3 Grant Scanner + Requirement Extraction** — Grants vertical; structured requirements w/ schema-retry. ✅ (2026-06-19, gate passed)
 - [x] **Phase 5: M4 Evidence Matching + Recommendation** — Map evidence, gaps, compliance matrix, human-approved recommendation. ✅ (2026-06-19, gate passed)
-- [ ] **Phase 6: M5 Package Builder + Export** — Source-enforced package; MD/PDF/DOCX; package approval gate.
+- [x] **Phase 6: M5 Package Builder + Export** — Source-enforced package; MD/PDF/DOCX; package approval gate. ✅ (2026-06-19, gate passed)
 - [ ] **Phase 7: M6 Audit Dashboard + Billing** — Logs dashboard; audit export; Stripe; revenue records; time-saved.
 
 ## Phase Details
@@ -90,5 +90,5 @@ Seven phases map 1:1 to the PRD's delivery milestones M0–M6. The workflow engi
 | 3. M2 GovCon Scanner + Workflow Engine | 1/1 | Complete | 2026-06-19 |
 | 4. M3 Grant Scanner + Requirement Extraction | 1/1 | Complete | 2026-06-19 |
 | 5. M4 Evidence Matching + Recommendation | 1/1 | Complete | 2026-06-19 |
-| 6. M5 Package Builder + Export | 0/1 | Not started | - |
+| 6. M5 Package Builder + Export | 1/1 | Complete | 2026-06-19 |
 | 7. M6 Audit Dashboard + Billing | 0/1 | Not started | - |

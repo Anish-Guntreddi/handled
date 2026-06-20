@@ -5,16 +5,30 @@
 See: .planning/PROJECT.md (updated 2026-06-19)
 
 **Core value:** Minimal inputs → filing-ready, source-backed GovCon/grant packages, human-approved, fully audited.
-**Current focus:** Phase 6 — M5 Package Builder + Export
+**Current focus:** Phase 7 — M6 Audit Dashboard + Billing (final phase)
 
 ## Current Position
 
-Phase: 6 of 7 (M5 Package builder + export) — STARTING
-Plan: 1 of 1 (Phases 1–5 complete)
-Status: Phases 1–5 (M0/M1/M2/M3/M4) COMPLETE — gates passed. Ready to execute Phase 6.
-Last activity: 2026-06-19 — M4 built (evidence matching, compliance matrix, recommendation, approval), gated, committed.
+Phase: 7 of 7 (M6 Audit dashboard + billing) — STARTING
+Plan: 1 of 1 (Phases 1–6 complete)
+Status: Phases 1–6 (M0/M1/M2/M3/M4/M5) COMPLETE — gates passed. Ready to execute the final phase.
+Last activity: 2026-06-19 — M5 built (package builder, Audit/Citation gate, approval-gated MD/PDF/DOCX export), gated, committed.
 
-Progress: [███████░░░] ~71% (5 of 7 phases)
+Progress: [█████████░] ~86% (6 of 7 phases)
+
+### Phase 6 (M5) — DONE ✅ (gate passed)
+Package builder (WorkflowType.package_build): build_package assembles an APPROVED filing into a
+fresh *version* of generated_documents (compliance_matrix, narrative, submission_checklist,
+missing_items, citation_appendix). Narrative agent (agents/narrative.py) stitches only from
+matched/user_provided evidence, every claim carrying a citation marker (CON-2). validate_citations
+is the Audit/Citation gate: a doc is citation_validated only if every citation resolves and
+claim-bearing docs are non-empty. Package approval (services/approvals.py target=package) is
+BLOCKED unless all docs validated → only then status=ready (CON-2). Export (services/export.py)
+renders real MD/PDF/DOCX (fpdf2 + python-docx), gated on status=ready, returns a download only —
+never auto-submits (CON-1). APIs: build-package (202), GET package, export?format= (download).
+Filing aggregate gains generatedDocuments + packageReady; filing UI gains a 4th step, package doc
+viewer, approve-package, and format-gated export buttons. 61 pytest + live uvicorn QA (real
+2-page PDF + valid DOCX through the server, all gates 422 before approval). New dep: fpdf2.
 
 ### Phase 5 (M4) — DONE ✅ (gate passed)
 Evidence Acquisition (pgvector RAG over document_chunks → materialize relevant chunks as sourced

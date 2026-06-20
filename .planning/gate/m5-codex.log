@@ -1,0 +1,2140 @@
+Reading additional input from stdin...
+OpenAI Codex v0.130.0
+--------
+workdir: /Users/anishguntreddi/Documents/hackathon
+model: gpt-5.4
+provider: openai
+approval: never
+sandbox: read-only
+reasoning effort: xhigh
+reasoning summaries: none
+session id: 019ee287-c40d-7722-98d7-6209552b0354
+--------
+user
+Review the CaptureOS M5 changeset (package builder + export) in apps/api/captureos for correctness and security. Focus:
+1) CON-2: can a generated_document reach citation_validated=True (or the filing reach status=ready) with an unsourced claim? Trace services/packaging.py build_package + validate_citations and services/approvals.py package gate.
+2) CON-1: export (api/filings.py export_package + services/export.py) — does it ever transmit anywhere, or only return a download? Is it gated on human package approval (status=ready)?
+3) CON-5 org isolation across build-package / get package / export / approvals.
+4) Export safety: content-disposition filename injection, PDF/DOCX generation crashes on hostile input (long tokens, unicode), format param validation, DoS/unbounded memory.
+5) State machine: build-package precondition (must be recommendation-approved), re-build invalidating a prior package approval.
+Report concrete findings as file:line + severity (critical/high/medium/low). Terse.
+codex
+Reviewing the `apps/api/captureos` changeset with emphasis on package build, approval gating, export behavior, org isolation, and state transitions. I’m starting by locating the touched files and reading the relevant service and API paths before I trace the state machine end to end.
+exec
+/bin/zsh -lc "pwd && rg --files apps/api/captureos | rg '(services/(packaging|approvals|export)\\.py|api/filings\\.py|models|schemas|routes|dependencies)'" in /Users/anishguntreddi/Documents/hackathon
+ succeeded in 0ms:
+/Users/anishguntreddi/Documents/hackathon
+apps/api/captureos/services/packaging.py
+apps/api/captureos/services/export.py
+apps/api/captureos/services/approvals.py
+apps/api/captureos/api/filings.py
+apps/api/captureos/models/audit.py
+apps/api/captureos/models/company.py
+apps/api/captureos/models/org.py
+apps/api/captureos/models/enums.py
+apps/api/captureos/models/documents.py
+apps/api/captureos/models/billing.py
+apps/api/captureos/models/jobs.py
+apps/api/captureos/models/__init__.py
+apps/api/captureos/models/opportunities.py
+apps/api/captureos/models/evidence.py
+apps/api/captureos/models/workflow.py
+apps/api/captureos/models/filings.py
+apps/api/captureos/schemas/auth.py
+apps/api/captureos/schemas/org.py
+apps/api/captureos/schemas/workflow.py
+apps/api/captureos/schemas/__init__.py
+apps/api/captureos/schemas/opportunity.py
+apps/api/captureos/schemas/filing.py
+apps/api/captureos/schemas/document.py
+apps/api/captureos/schemas/company.py
+apps/api/captureos/schemas/common.py
+
+exec
+/bin/zsh -lc 'git status --short && git diff --stat -- apps/api/captureos' in /Users/anishguntreddi/Documents/hackathon
+ succeeded in 0ms:
+ M .planning/ROADMAP.md
+ M .planning/gate/m4-codex.log
+ M apps/api/captureos/api/filings.py
+ M apps/api/captureos/schemas/filing.py
+ M apps/api/captureos/services/approvals.py
+ M apps/api/captureos/workflows/pipelines.py
+ M apps/api/pyproject.toml
+ M apps/api/uv.lock
+ M apps/web/src/app/orgs/[orgId]/filings/[filingId]/page.tsx
+ M apps/web/src/lib/api.ts
+ M apps/web/src/lib/types.ts
+?? .planning/gate/m4-codex-verdict.md
+?? .planning/gate/m5-codex.log
+?? apps/api/captureos/agents/narrative.py
+?? apps/api/captureos/services/export.py
+?? apps/api/captureos/services/packaging.py
+?? apps/api/tests/test_packaging.py
+ apps/api/captureos/api/filings.py         | 141 +++++++++++++++++++++++++++++-
+ apps/api/captureos/schemas/filing.py      |  22 +++++
+ apps/api/captureos/services/approvals.py  |  47 ++++++++--
+ apps/api/captureos/workflows/pipelines.py |   7 ++
+ 4 files changed, 208 insertions(+), 9 deletions(-)
+
+exec
+/bin/zsh -lc "rg -n \"build_package|validate_citations|citation_validated|status=ready|status == \\\"ready\\\"|recommendation.*approved|package approval|export_package|Content-Disposition|org_id|organization|tenant|approve|ready\" apps/api/captureos" in /Users/anishguntreddi/Documents/hackathon
+ succeeded in 0ms:
+apps/api/captureos/services/evidence.py:43:            select(Filing).where(Filing.id == filing_id, Filing.org_id == ctx.org_id)
+apps/api/captureos/services/evidence.py:52:    session: AsyncSession, org_id: uuid.UUID, document_id: uuid.UUID
+apps/api/captureos/services/evidence.py:57:                select(Source.id).where(Source.org_id == org_id, Source.document_id == document_id)
+apps/api/captureos/services/evidence.py:79:        (await ctx.session.execute(select(EvidenceItem).where(EvidenceItem.org_id == ctx.org_id)))
+apps/api/captureos/services/evidence.py:92:    already = {
+apps/api/captureos/services/evidence.py:98:            session, ctx.org_id, req.text, k=_RETRIEVE_K
+apps/api/captureos/services/evidence.py:100:            if chunk.id in already or _overlap(req.text, chunk.text) < _MATERIALIZE_MIN_OVERLAP:
+apps/api/captureos/services/evidence.py:102:            source_id = await _document_source_id(session, ctx.org_id, chunk.document_id)
+apps/api/captureos/services/evidence.py:105:                    org_id=ctx.org_id,
+apps/api/captureos/services/evidence.py:113:            already.add(chunk.id)
+apps/api/captureos/services/evidence.py:162:                org_id=ctx.org_id,
+apps/api/captureos/workflows/pipelines.py:13:from captureos.services.packaging import build_package, validate_citations
+apps/api/captureos/workflows/pipelines.py:87:    return [("build_package", build_package), ("audit_citations", validate_citations)]
+apps/api/captureos/services/packaging.py:3:build_package assembles an approved filing into a fresh *version* of generated_documents
+apps/api/captureos/services/packaging.py:5:validate_citations is the CON-2 gate: it marks each document citation_validated only when every
+apps/api/captureos/services/packaging.py:6:citation resolves to a real evidence_item/source, so unsourced claims can't reach status=ready."""
+apps/api/captureos/services/packaging.py:46:            select(Filing).where(Filing.id == filing_id, Filing.org_id == ctx.org_id)
+apps/api/captureos/services/packaging.py:110:async def build_package(ctx: StepContext) -> None:
+apps/api/captureos/services/packaging.py:114:    org = await session.get(Organization, ctx.org_id)
+apps/api/captureos/services/packaging.py:151:        session, ctx.org_id, narrative_citations
+apps/api/captureos/services/packaging.py:176:                org_id=ctx.org_id,
+apps/api/captureos/services/packaging.py:183:                citation_validated=False,
+apps/api/captureos/services/packaging.py:193:    session, org_id: uuid.UUID, citations: list[dict]
+apps/api/captureos/services/packaging.py:202:                    EvidenceItem.id.in_(ev_ids), EvidenceItem.org_id == org_id
+apps/api/captureos/services/packaging.py:258:async def validate_citations(ctx: StepContext) -> None:
+apps/api/captureos/services/packaging.py:259:    """CON-2 gate: a document is citation_validated only when every citation resolves to a real
+apps/api/captureos/services/packaging.py:268:            await session.execute(select(EvidenceItem.id).where(EvidenceItem.org_id == ctx.org_id))
+apps/api/captureos/services/packaging.py:275:        for i in (await session.execute(select(Source.id).where(Source.org_id == ctx.org_id)))
+apps/api/captureos/services/packaging.py:288:        doc.citation_validated = bool(all_resolve and non_empty_ok)
+apps/api/captureos/services/packaging.py:291:            if doc.citation_validated
+apps/api/captureos/services/packaging.py:294:        if doc.citation_validated:
+apps/api/captureos/services/documents.py:18:    org_id = ctx.org_id
+apps/api/captureos/services/documents.py:24:            select(Document).where(Document.id == document_id, Document.org_id == org_id)
+apps/api/captureos/services/documents.py:32:        result = await ingest_content(session, org_id, document=document, raw_text=raw_text)
+apps/api/captureos/services/documents.py:37:        result = await ingest_content(session, org_id, document=document, data=data)
+apps/api/captureos/services/scan.py:34:        await ctx.session.execute(select(CompanyProfile).where(CompanyProfile.org_id == ctx.org_id))
+apps/api/captureos/services/scan.py:40:    org_id = ctx.org_id
+apps/api/captureos/services/scan.py:75:                    Opportunity.org_id == org_id, Opportunity.external_id == item.external_id
+apps/api/captureos/services/scan.py:83:            org_id=org_id,
+apps/api/captureos/services/scan.py:91:            org_id=org_id,
+apps/api/captureos/config.py:5:makes the system "local-first, cloud-ready" (PROJECT.md D1).
+apps/api/captureos/services/gaps.py:18:async def _get_or_create_user_source(session: AsyncSession, org_id: uuid.UUID) -> Source:
+apps/api/captureos/services/gaps.py:23:                .where(Source.org_id == org_id, Source.kind == SourceKind.user_input.value)
+apps/api/captureos/services/gaps.py:32:            org_id=org_id, kind=SourceKind.user_input.value, title="Owner-provided evidence"
+apps/api/captureos/services/gaps.py:41:    org_id = ctx.org_id
+apps/api/captureos/services/gaps.py:46:        await session.execute(select(Filing).where(Filing.id == filing_id, Filing.org_id == org_id))
+apps/api/captureos/services/gaps.py:65:        source = await _get_or_create_user_source(session, org_id)
+apps/api/captureos/services/gaps.py:67:            org_id=org_id,
+apps/api/captureos/services/gaps.py:77:                    Document.id == uuid.UUID(str(document_id)), Document.org_id == org_id
+apps/api/captureos/services/gaps.py:86:                    select(Source.id).where(Source.org_id == org_id, Source.document_id == doc.id)
+apps/api/captureos/services/gaps.py:93:            org_id=org_id,
+apps/api/captureos/services/gaps.py:114:            org_id=org_id,
+apps/api/captureos/agents/base.py:42:    org_id: uuid.UUID
+apps/api/captureos/agents/base.py:138:                    org_id=ctx.org_id,
+apps/api/captureos/agents/base.py:155:            org_id=ctx.org_id,
+apps/api/captureos/services/approvals.py:2:filing state machine. A recommendation is only 'pursue'-actionable once approved (CON-1 spirit)."""
+apps/api/captureos/services/approvals.py:23:    org_id: uuid.UUID,
+apps/api/captureos/services/approvals.py:28:    approver_user_id: uuid.UUID,
+apps/api/captureos/services/approvals.py:33:            org_id=org_id,
+apps/api/captureos/services/approvals.py:36:            approver_user_id=approver_user_id,
+apps/api/captureos/services/approvals.py:41:    approved = decision == ApprovalDecision.approved.value
+apps/api/captureos/services/approvals.py:50:            rec.approved = approved
+apps/api/captureos/services/approvals.py:51:        # Approved → ready to package (FR-AP-1). Rejected → back to editable (FR-AP-3).
+apps/api/captureos/services/approvals.py:52:        filing.status = FilingStatus.approved.value if approved else FilingStatus.recommended.value
+apps/api/captureos/services/approvals.py:54:        if approved:
+apps/api/captureos/services/approvals.py:55:            # CON-2 gate: the package can only become `ready` if every document in the latest
+apps/api/captureos/services/approvals.py:78:            if not docs or any(not d.citation_validated for d in docs):
+apps/api/captureos/services/approvals.py:80:                    "Package has unsourced claims and cannot be approved for export (CON-2)"
+apps/api/captureos/services/approvals.py:83:                doc.status = GeneratedDocStatus.ready.value
+apps/api/captureos/services/approvals.py:84:            filing.status = FilingStatus.ready.value
+apps/api/captureos/workflows/engine.py:36:    def org_id(self):
+apps/api/captureos/workflows/engine.py:37:        return self.run.org_id
+apps/api/captureos/workflows/engine.py:52:            org_id=self.run.org_id,
+apps/api/captureos/workflows/engine.py:71:            org_id=run.org_id,
+apps/api/captureos/workflows/engine.py:92:        "workflow.started", org_id=run.org_id, run_id=run.id, payload={"type": run.type}
+apps/api/captureos/workflows/engine.py:98:            continue  # idempotent: already completed (re-delivery / resume)
+apps/api/captureos/workflows/engine.py:110:                "workflow.needs_input", org_id=run.org_id, run_id=run.id, status="needs_input"
+apps/api/captureos/workflows/engine.py:121:                org_id=run.org_id,
+apps/api/captureos/workflows/engine.py:152:        org_id=run.org_id,
+apps/api/captureos/workflows/queue.py:22:def enqueue_job(session: AsyncSession, run_id: uuid.UUID, org_id: uuid.UUID | None = None) -> None:
+apps/api/captureos/workflows/queue.py:24:    session.add(WorkflowJob(run_id=run_id, org_id=org_id, status="pending"))
+apps/api/captureos/services/recommendation.py:23:            select(Filing).where(Filing.id == filing_id, Filing.org_id == ctx.org_id)
+apps/api/captureos/services/recommendation.py:83:        rec = Recommendation(org_id=ctx.org_id, filing_id=filing_id)
+apps/api/captureos/services/recommendation.py:92:    rec.approved = False  # draft until a human approves (FR-RC-3 / FR-AP-1)
+apps/api/captureos/services/filings.py:28:    session: AsyncSession, org_id: uuid.UUID, opportunity_id: uuid.UUID, user_id: uuid.UUID
+apps/api/captureos/services/filings.py:33:                Opportunity.id == opportunity_id, Opportunity.org_id == org_id
+apps/api/captureos/services/filings.py:40:        org_id=org_id,
+apps/api/captureos/services/filings.py:56:            select(Filing).where(Filing.id == filing_id, Filing.org_id == ctx.org_id)
+apps/api/captureos/services/filings.py:94:                org_id=ctx.org_id,
+apps/api/captureos/ingestion/retrieval.py:19:    session: AsyncSession, org_id: uuid.UUID, query_text: str, *, k: int = 5
+apps/api/captureos/ingestion/retrieval.py:28:        .where(DocumentChunk.org_id == org_id, DocumentChunk.embedding.is_not(None))
+apps/api/captureos/services/company_brain.py:35:    org_id = ctx.org_id
+apps/api/captureos/services/company_brain.py:42:        org_id=org_id, kind=SourceKind.user_input.value, title="Owner-provided profile inputs"
+apps/api/captureos/services/company_brain.py:54:            org_id=org_id, kind=SourceKind.web.value, url=website_url, title=website_url
+apps/api/captureos/services/company_brain.py:62:    # Pull text from the org's already-ingested documents (most recent chunks).
+apps/api/captureos/services/company_brain.py:68:                .where(DocumentChunk.org_id == org_id)
+apps/api/captureos/services/company_brain.py:82:                    .where(Source.org_id == org_id, Source.kind == SourceKind.document.value)
+apps/api/captureos/services/company_brain.py:124:    org_id = ctx.org_id
+apps/api/captureos/services/company_brain.py:142:        await session.execute(select(CompanyProfile).where(CompanyProfile.org_id == org_id))
+apps/api/captureos/services/company_brain.py:145:        profile = CompanyProfile(org_id=org_id)
+apps/api/captureos/services/company_brain.py:155:                    EvidenceItem.org_id == org_id,
+apps/api/captureos/services/company_brain.py:170:                org_id=org_id,
+apps/api/captureos/workflows/dispatch.py:19:    enqueue_job(session, run.id, run.org_id)
+apps/api/captureos/sources/grants_gov.py:29:    "Nonprofit organizations",
+apps/api/captureos/sources/grants_gov.py:32:    "For-profit organizations",
+apps/api/captureos/sources/grants_gov.py:54:            f"${floor:,}–${ceiling:,}. Applicants must demonstrate organizational capacity, a "
+apps/api/captureos/ingestion/service.py:34:    org_id: uuid.UUID,
+apps/api/captureos/ingestion/service.py:55:    # Idempotency: identical content already ingested for this org → don't duplicate chunks.
+apps/api/captureos/ingestion/service.py:59:                Document.org_id == org_id,
+apps/api/captureos/ingestion/service.py:77:        org_id=org_id,
+apps/api/captureos/ingestion/service.py:91:                    org_id=org_id,
+apps/api/captureos/db/base.py:49:    """Adds an indexed ``org_id`` FK (ON DELETE CASCADE). Every tenant table uses this
+apps/api/captureos/db/base.py:53:    def org_id(cls) -> Mapped[uuid.UUID]:  # noqa: N805
+apps/api/captureos/db/base.py:56:            ForeignKey("organizations.id", ondelete="CASCADE"),
+apps/api/captureos/schemas/filing.py:53:    approved: bool = False
+apps/api/captureos/schemas/filing.py:70:    decision: str  # approved / rejected
+apps/api/captureos/schemas/filing.py:79:    citation_validated: bool = False
+apps/api/captureos/schemas/filing.py:90:    can_approve: bool = False  # status == package_review AND every document citation-validated
+apps/api/captureos/schemas/filing.py:91:    can_export: bool = False  # status == ready (package approved)
+apps/api/captureos/schemas/filing.py:106:    package_ready: bool = False  # status == ready (export-eligible)
+apps/api/captureos/providers/audit.py:17:_UUID_FIELDS = ("org_id", "filing_id", "run_id", "step_id")
+apps/api/captureos/providers/audit.py:19:    "org_id",
+apps/api/captureos/api/workflows.py:15:router = APIRouter(prefix="/orgs/{org_id}/workflow-runs", tags=["workflows"])
+apps/api/captureos/api/workflows.py:23:    if run is None or run.org_id != ctx.org_id:  # CON-5
+apps/api/captureos/api/documents.py:31:router = APIRouter(prefix="/orgs/{org_id}/documents", tags=["documents"])
+apps/api/captureos/api/documents.py:32:blobs_router = APIRouter(prefix="/orgs/{org_id}/blobs", tags=["documents"])
+apps/api/captureos/api/documents.py:60:    session: SessionDep, org_id: uuid.UUID, document_id: uuid.UUID
+apps/api/captureos/api/documents.py:64:            select(Document).where(Document.id == document_id, Document.org_id == org_id)
+apps/api/captureos/api/documents.py:78:    full_key = f"{ctx.org_id}/{rel_key}"
+apps/api/captureos/api/documents.py:83:        org_id=ctx.org_id,
+apps/api/captureos/api/documents.py:96:        upload_url = f"/api/v1/orgs/{ctx.org_id}/blobs/{rel_key}"
+apps/api/captureos/api/documents.py:102:        org_id=ctx.org_id,
+apps/api/captureos/api/documents.py:128:    key = f"{ctx.org_id}/{rel_key}"
+apps/api/captureos/api/documents.py:138:    uri = f"local://{ctx.org_id}/{rel_key}"
+apps/api/captureos/api/documents.py:155:    await _get_doc_or_404(session, ctx.org_id, document_id)
+apps/api/captureos/api/documents.py:160:        org_id=ctx.org_id,
+apps/api/captureos/api/documents.py:179:        org_id=ctx.org_id,
+apps/api/captureos/api/documents.py:189:        org_id=ctx.org_id,
+apps/api/captureos/api/documents.py:206:                .where(Document.org_id == ctx.org_id)
+apps/api/captureos/api/documents.py:223:    doc = await _get_doc_or_404(session, ctx.org_id, document_id)
+apps/api/captureos/api/filings.py:54:router = APIRouter(prefix="/orgs/{org_id}/filings", tags=["filings"])
+apps/api/captureos/api/filings.py:56:_VALID_DECISIONS = {ApprovalDecision.approved.value, ApprovalDecision.rejected.value}
+apps/api/captureos/api/filings.py:58:# A filing must have an approved recommendation before (re)building a package.
+apps/api/captureos/api/filings.py:60:    FilingStatus.approved.value,
+apps/api/captureos/api/filings.py:63:    FilingStatus.ready.value,
+apps/api/captureos/api/filings.py:101:        citation_validated=doc.citation_validated,
+apps/api/captureos/api/filings.py:119:    session: SessionDep, org_id: uuid.UUID, filing_id: uuid.UUID
+apps/api/captureos/api/filings.py:122:        await session.execute(select(Filing).where(Filing.id == filing_id, Filing.org_id == org_id))
+apps/api/captureos/api/filings.py:138:        org_id=ctx.org_id,
+apps/api/captureos/api/filings.py:152:    filing = await create_filing(session, ctx.org_id, body.opportunity_id, ctx.user.id)
+apps/api/captureos/api/filings.py:155:        org_id=ctx.org_id,
+apps/api/captureos/api/filings.py:169:                select(Filing).where(Filing.org_id == ctx.org_id).order_by(Filing.created_at.desc())
+apps/api/captureos/api/filings.py:186:    filing = await _get_filing_or_404(session, ctx.org_id, filing_id)
+apps/api/captureos/api/filings.py:200:    filing = await _get_filing_or_404(session, ctx.org_id, filing_id)
+apps/api/captureos/api/filings.py:214:    filing = await _get_filing_or_404(session, ctx.org_id, filing_id)
+apps/api/captureos/api/filings.py:235:    filing = await _get_filing_or_404(session, ctx.org_id, filing_id)
+apps/api/captureos/api/filings.py:247:async def approve(
+apps/api/captureos/api/filings.py:254:    filing = await _get_filing_or_404(session, ctx.org_id, filing_id)
+apps/api/captureos/api/filings.py:257:        ctx.org_id,
+apps/api/captureos/api/filings.py:261:        approver_user_id=ctx.user.id,
+apps/api/captureos/api/filings.py:266:        org_id=ctx.org_id,
+apps/api/captureos/api/filings.py:280:async def build_package(
+apps/api/captureos/api/filings.py:283:    filing = await _get_filing_or_404(session, ctx.org_id, filing_id)
+apps/api/captureos/api/filings.py:285:        # The recommendation must be human-approved before a package can be built (FR-AP-1).
+apps/api/captureos/api/filings.py:294:    filing = await _get_filing_or_404(session, ctx.org_id, filing_id)
+apps/api/captureos/api/filings.py:296:    all_valid = bool(docs) and all(d.citation_validated for d in docs)
+apps/api/captureos/api/filings.py:303:        can_approve=filing.status == FilingStatus.package_review.value and all_valid,
+apps/api/captureos/api/filings.py:304:        can_export=filing.status == FilingStatus.ready.value,
+apps/api/captureos/api/filings.py:309:async def export_package(
+apps/api/captureos/api/filings.py:315:    filing = await _get_filing_or_404(session, ctx.org_id, filing_id)
+apps/api/captureos/api/filings.py:316:    # CON-1/CON-2: export is gated behind human package approval; it only ever returns a download.
+apps/api/captureos/api/filings.py:317:    if filing.status != FilingStatus.ready.value:
+apps/api/captureos/api/filings.py:318:        raise ValidationFailed("Package must be approved (status=ready) before export")
+apps/api/captureos/api/filings.py:329:        org_id=ctx.org_id,
+apps/api/captureos/api/filings.py:344:    filing = await _get_filing_or_404(session, ctx.org_id, filing_id)
+apps/api/captureos/api/filings.py:418:                approved=rec.approved,
+apps/api/captureos/api/filings.py:430:        package_ready=filing.status == FilingStatus.ready.value,
+apps/api/captureos/schemas/company.py:23:    org_id: uuid.UUID
+apps/api/captureos/api/company_profile.py:26:router = APIRouter(prefix="/orgs/{org_id}/company-profile", tags=["company-brain"])
+apps/api/captureos/api/company_profile.py:31:        org_id=profile.org_id,
+apps/api/captureos/api/company_profile.py:47:async def _evidence_count(session: SessionDep, org_id) -> int:
+apps/api/captureos/api/company_profile.py:50:            select(func.count()).select_from(EvidenceItem).where(EvidenceItem.org_id == org_id)
+apps/api/captureos/api/company_profile.py:63:        org_id=ctx.org_id,
+apps/api/captureos/api/company_profile.py:73:        org_id=ctx.org_id,
+apps/api/captureos/api/company_profile.py:84:        await session.execute(select(CompanyProfile).where(CompanyProfile.org_id == ctx.org_id))
+apps/api/captureos/api/company_profile.py:88:    return _to_response(profile, await _evidence_count(session, ctx.org_id))
+apps/api/captureos/api/company_profile.py:96:        await session.execute(select(CompanyProfile).where(CompanyProfile.org_id == ctx.org_id))
+apps/api/captureos/api/company_profile.py:107:                    .where(Source.org_id == ctx.org_id, Source.kind == SourceKind.user_input.value)
+apps/api/captureos/api/company_profile.py:116:                org_id=ctx.org_id,
+apps/api/captureos/api/company_profile.py:129:                    org_id=ctx.org_id,
+apps/api/captureos/api/company_profile.py:141:            org_id=ctx.org_id,
+apps/api/captureos/api/company_profile.py:147:    return _to_response(profile, await _evidence_count(session, ctx.org_id))
+apps/api/captureos/api/health.py:22:@router.get("/readyz", response_model=Health)
+apps/api/captureos/api/health.py:23:async def readyz(session: SessionDep) -> Health:
+apps/api/captureos/api/health.py:27:    return Health(status="ready", version=__version__, environment=settings.captureos_env.value)
+apps/api/captureos/api/orgs.py:1:"""Organization routes. ``GET /orgs/{org_id}`` is the M0 org-scoping acceptance test."""
+apps/api/captureos/api/orgs.py:23:    session.add(OrgMember(org_id=org.id, user_id=user.id, role=OrgRole.owner.value))
+apps/api/captureos/api/orgs.py:24:    await record_event("org.created", org_id=org.id, actor=ActorType.user, actor_id=str(user.id))
+apps/api/captureos/api/orgs.py:39:        .join(OrgMember, OrgMember.org_id == Organization.id)
+apps/api/captureos/api/orgs.py:56:@router.get("/{org_id}", response_model=OrgResponse)
+apps/api/captureos/api/orgs.py:58:    org = ctx.organization
+apps/api/captureos/api/orgs.py:69:@router.get("/{org_id}/members", response_model=list[OrgMemberResponse])
+apps/api/captureos/api/orgs.py:74:        .where(OrgMember.org_id == ctx.org_id)
+apps/api/captureos/api/orgs.py:84:    "/{org_id}/members", response_model=OrgMemberResponse, status_code=status.HTTP_201_CREATED
+apps/api/captureos/api/orgs.py:95:        select(OrgMember).where(OrgMember.org_id == ctx.org_id, OrgMember.user_id == target.id)
+apps/api/captureos/api/orgs.py:98:        raise ConflictError("User is already a member of this organization")
+apps/api/captureos/api/orgs.py:99:    session.add(OrgMember(org_id=ctx.org_id, user_id=target.id, role=role))
+apps/api/captureos/api/orgs.py:102:        org_id=ctx.org_id,
+apps/api/captureos/api/opportunities.py:24:router = APIRouter(prefix="/orgs/{org_id}", tags=["opportunities"])
+apps/api/captureos/api/opportunities.py:37:        org_id=ctx.org_id,
+apps/api/captureos/api/opportunities.py:47:        org_id=ctx.org_id,
+apps/api/captureos/api/opportunities.py:63:    stmt = select(Opportunity).where(Opportunity.org_id == ctx.org_id)
+apps/api/captureos/api/opportunities.py:92:                Opportunity.id == opportunity_id, Opportunity.org_id == ctx.org_id
+apps/api/captureos/agents/recommendation.py:5:high-gap'). The recommendation is a DRAFT until a human approves it (FR-RC-3)."""
+apps/api/captureos/agents/recommendation.py:68:            f"{data.matched}/{data.total_requirements} requirements already evidenced",
+apps/api/captureos/api/auth.py:51:        raise ConflictError("An account with this email already exists")
+apps/api/captureos/api/auth.py:65:        session.add(OrgMember(org_id=org.id, user_id=user.id, role=OrgRole.owner.value))
+apps/api/captureos/api/auth.py:67:            "org.created", org_id=org.id, actor=ActorType.user, actor_id=str(user.id)
+apps/api/captureos/api/auth.py:119:        .join(Organization, Organization.id == OrgMember.org_id)
+apps/api/captureos/api/auth.py:123:        OrgMembershipSummary(org_id=org.id, name=org.name, role=member.role, plan=org.plan)
+apps/api/captureos/models/documents.py:26:    __table_args__ = (UniqueConstraint("org_id", "content_hash"),)
+apps/api/captureos/scripts/seed.py:36:            .join(OrgMember, OrgMember.org_id == Organization.id)
+apps/api/captureos/scripts/seed.py:43:            session.add(OrgMember(org_id=org.id, user_id=user.id, role=OrgRole.owner.value))
+apps/api/captureos/models/audit.py:25:        Index("ix_audit_events_org_occurred", "org_id", "occurred_at"),
+apps/api/captureos/models/audit.py:34:    org_id: Mapped[uuid.UUID | None] = mapped_column(
+apps/api/captureos/schemas/auth.py:16:    # Optionally bootstrap an organization on signup; the user becomes its owner.
+apps/api/captureos/schemas/auth.py:47:    org_id: uuid.UUID
+apps/api/captureos/models/company.py:18:    __table_args__ = (UniqueConstraint("org_id"),)
+apps/api/captureos/audit/service.py:19:    org_id: str | uuid.UUID | None = None,
+apps/api/captureos/audit/service.py:35:        "org_id": str(org_id) if org_id else None,
+apps/api/captureos/models/enums.py:63:    # Future verticals (schema-ready, not implemented in MVP):
+apps/api/captureos/models/enums.py:76:    approved = "approved"
+apps/api/captureos/models/enums.py:79:    ready = "ready"
+apps/api/captureos/models/enums.py:121:    ready = "ready"
+apps/api/captureos/models/enums.py:130:    approved = "approved"
+apps/api/captureos/models/jobs.py:24:    # org_id is denormalized for debugging/scoping but intentionally has no FK (infra table).
+apps/api/captureos/models/jobs.py:25:    org_id: Mapped[uuid.UUID | None] = mapped_column(PGUUID(as_uuid=True), nullable=True)
+apps/api/captureos/core/deps.py:61:    organization: Organization
+apps/api/captureos/core/deps.py:69:    def org_id(self) -> uuid.UUID:
+apps/api/captureos/core/deps.py:70:        return self.organization.id
+apps/api/captureos/core/deps.py:73:async def _load_org_context(org_id: uuid.UUID, user: User, session: AsyncSession) -> OrgContext:
+apps/api/captureos/core/deps.py:74:    org = await session.get(Organization, org_id)
+apps/api/captureos/core/deps.py:79:        select(OrgMember).where(OrgMember.org_id == org_id, OrgMember.user_id == user.id)
+apps/api/captureos/core/deps.py:84:    return OrgContext(user=user, organization=org, membership=membership)
+apps/api/captureos/core/deps.py:96:        org_id: Annotated[uuid.UUID, Path()],
+apps/api/captureos/core/deps.py:98:        ctx = await _load_org_context(org_id, user, session)
+apps/api/captureos/models/org.py:1:"""Tenancy: organizations, global users, and org membership (CON-5, NFR-1)."""
+apps/api/captureos/models/org.py:16:    __tablename__ = "organizations"
+apps/api/captureos/models/org.py:23:        back_populates="organization", cascade="all, delete-orphan"
+apps/api/captureos/models/org.py:48:    __table_args__ = (UniqueConstraint("org_id", "user_id"),)
+apps/api/captureos/models/org.py:50:    org_id: Mapped[uuid.UUID] = mapped_column(
+apps/api/captureos/models/org.py:52:        ForeignKey("organizations.id", ondelete="CASCADE"),
+apps/api/captureos/models/org.py:64:    organization: Mapped[Organization] = relationship(back_populates="members")
+apps/api/captureos/models/filings.py:130:    # Draft until a human approves (FR-AP-1 / FR-RC-3).
+apps/api/captureos/models/filings.py:131:    approved: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+apps/api/captureos/models/filings.py:158:    citation_validated: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+apps/api/captureos/models/filings.py:175:    approver_user_id: Mapped[uuid.UUID] = mapped_column(
+apps/api/captureos/models/filings.py:179:        String(16), nullable=False, default=ApprovalDecision.approved.value
+
+codex
+I’ve identified the new package/export code paths and the approval gate. Next I’m reading the concrete implementations and the filing models so I can check whether the API-level claims actually hold under rebuilds, stale records, and cross-org access.
+exec
+/bin/zsh -lc "nl -ba apps/api/captureos/services/packaging.py | sed -n '1,360p'" in /Users/anishguntreddi/Documents/hackathon
+ succeeded in 0ms:
+     1	"""Package builder + Audit/Citation enforcement (FR-PB-*, CON-2).
+     2	
+     3	build_package assembles an approved filing into a fresh *version* of generated_documents
+     4	(compliance matrix, response narrative, submission checklist, missing-items, citation appendix).
+     5	validate_citations is the CON-2 gate: it marks each document citation_validated only when every
+     6	citation resolves to a real evidence_item/source, so unsourced claims can't reach status=ready."""
+     7	
+     8	from __future__ import annotations
+     9	
+    10	import uuid
+    11	from collections.abc import Sequence
+    12	
+    13	from sqlalchemy import func, select
+    14	
+    15	from captureos.agents.narrative import (
+    16	    NarrativeGenerationAgent,
+    17	    NarrativeGenerationInput,
+    18	    NarrativeRequirement,
+    19	)
+    20	from captureos.models.enums import (
+    21	    FilingStatus,
+    22	    GeneratedDocStatus,
+    23	    GeneratedDocType,
+    24	    MatchStatus,
+    25	)
+    26	from captureos.models.evidence import EvidenceItem, Source
+    27	from captureos.models.filings import Filing, GeneratedDocument
+    28	from captureos.models.opportunities import Opportunity
+    29	from captureos.models.org import Organization
+    30	from captureos.services.compliance import build_compliance_matrix, gap_rows
+    31	from captureos.workflows.engine import StepContext
+    32	
+    33	# Documents that assert capability and therefore MUST carry resolvable evidence citations (CON-2).
+    34	_CLAIM_BEARING = {
+    35	    GeneratedDocType.narrative.value,
+    36	    GeneratedDocType.capability_statement.value,
+    37	    GeneratedDocType.compliance_matrix.value,
+    38	}
+    39	_MET = (MatchStatus.matched.value, MatchStatus.user_provided.value)
+    40	
+    41	
+    42	async def _load_filing(ctx: StepContext) -> Filing:
+    43	    filing_id = uuid.UUID(str(ctx.params["filing_id"]))
+    44	    filing = (
+    45	        await ctx.session.execute(
+    46	            select(Filing).where(Filing.id == filing_id, Filing.org_id == ctx.org_id)
+    47	        )
+    48	    ).scalar_one_or_none()
+    49	    if filing is None:
+    50	        raise ValueError("Filing not found")
+    51	    return filing
+    52	
+    53	
+    54	def _compliance_md(title: str, matrix: list[dict]) -> tuple[str, list[dict]]:
+    55	    rows = [
+    56	        "# Compliance Matrix",
+    57	        "",
+    58	        f"**{title}**",
+    59	        "",
+    60	        "| # | Requirement | Mandatory | Status | Evidence |",
+    61	        "|---|---|---|---|---|",
+    62	    ]
+    63	    citations: list[dict] = []
+    64	    for i, row in enumerate(matrix, 1):
+    65	        ev = (row.get("evidence") or "—").replace("|", "\\|")[:120]
+    66	        req = row["requirement"].replace("|", "\\|")[:160]
+    67	        rows.append(
+    68	            f"| {i} | {req} | {'Yes' if row['mandatory'] else 'No'} | {row['status']} | {ev} |"
+    69	        )
+    70	        if row["status"] in _MET and row.get("evidence_item_id"):
+    71	            citations.append(
+    72	                {
+    73	                    "requirement_id": str(row["requirement_id"]),
+    74	                    "evidence_item_id": str(row["evidence_item_id"]),
+    75	                    "source_id": str(row["source_id"]) if row.get("source_id") else None,
+    76	                }
+    77	            )
+    78	    return "\n".join(rows), citations
+    79	
+    80	
+    81	def _checklist_md(matrix: list[dict]) -> tuple[str, list[dict]]:
+    82	    rows = ["# Submission Checklist", ""]
+    83	    citations: list[dict] = []
+    84	    for row in matrix:
+    85	        mark = "x" if row["status"] in _MET else " "
+    86	        must = "**(MUST)** " if row["mandatory"] else ""
+    87	        rows.append(f"- [{mark}] {must}{row['requirement']} — _{row['status']}_")
+    88	        if row.get("source_id"):
+    89	            citations.append(
+    90	                {"requirement_id": str(row["requirement_id"]), "source_id": str(row["source_id"])}
+    91	            )
+    92	    return "\n".join(rows), citations
+    93	
+    94	
+    95	def _missing_md(gaps: list[dict]) -> tuple[str, list[dict]]:
+    96	    if not gaps:
+    97	        return "# Missing Items\n\nNo outstanding gaps — every requirement is satisfied.", []
+    98	    rows = ["# Missing Items", "", "Resolve these before submission:", ""]
+    99	    citations: list[dict] = []
+   100	    for row in gaps:
+   101	        must = "**(MUST)** " if row["mandatory"] else ""
+   102	        rows.append(f"- {must}{row['requirement']} ({row['category']}) — _{row['status']}_")
+   103	        if row.get("source_id"):
+   104	            citations.append(
+   105	                {"requirement_id": str(row["requirement_id"]), "source_id": str(row["source_id"])}
+   106	            )
+   107	    return "\n".join(rows), citations
+   108	
+   109	
+   110	async def build_package(ctx: StepContext) -> None:
+   111	    session = ctx.session
+   112	    filing = await _load_filing(ctx)
+   113	    opp = await session.get(Opportunity, filing.opportunity_id)
+   114	    org = await session.get(Organization, ctx.org_id)
+   115	    company_name = org.name if org else "The company"
+   116	    title = opp.title if opp else filing.kind
+   117	
+   118	    matrix = await build_compliance_matrix(session, filing.id)
+   119	    gaps = gap_rows(matrix)
+   120	
+   121	    # Narrative inputs: only satisfied requirements, each carrying its cited evidence (CON-2).
+   122	    narrative_reqs: list[NarrativeRequirement] = []
+   123	    for i, row in enumerate(
+   124	        [r for r in matrix if r["status"] in _MET and r.get("evidence_item_id")], 1
+   125	    ):
+   126	        narrative_reqs.append(
+   127	            NarrativeRequirement(
+   128	                requirement=row["requirement"],
+   129	                category=row["category"],
+   130	                evidence=row.get("evidence") or "",
+   131	                marker=f"E{i}",
+   132	                evidence_item_id=str(row["evidence_item_id"]),
+   133	                source_id=str(row["source_id"]) if row.get("source_id") else None,
+   134	            )
+   135	        )
+   136	    narrative = await NarrativeGenerationAgent().run(
+   137	        ctx.agent_context(),
+   138	        NarrativeGenerationInput(company_name=company_name, requirements=narrative_reqs),
+   139	    )
+   140	    narrative_md = ["# Response Narrative", ""]
+   141	    narrative_citations: list[dict] = []
+   142	    for section in narrative.sections:
+   143	        narrative_md += [f"## {section.requirement}", "", section.text, ""]
+   144	        narrative_citations += section.citations
+   145	    if not narrative.sections:
+   146	        narrative_md.append(
+   147	            "_No satisfied requirements yet; resolve gaps to populate the narrative._"
+   148	        )
+   149	
+   150	    appendix_md, appendix_citations = await _citation_appendix(
+   151	        session, ctx.org_id, narrative_citations
+   152	    )
+   153	
+   154	    compliance_md, compliance_citations = _compliance_md(title, matrix)
+   155	    checklist_md, checklist_citations = _checklist_md(matrix)
+   156	    missing_md, missing_citations = _missing_md(gaps)
+   157	
+   158	    next_version = (
+   159	        await session.execute(
+   160	            select(func.coalesce(func.max(GeneratedDocument.version), 0)).where(
+   161	                GeneratedDocument.filing_id == filing.id
+   162	            )
+   163	        )
+   164	    ).scalar_one() + 1
+   165	
+   166	    specs = [
+   167	        (GeneratedDocType.compliance_matrix.value, compliance_md, compliance_citations),
+   168	        (GeneratedDocType.narrative.value, "\n".join(narrative_md), narrative_citations),
+   169	        (GeneratedDocType.submission_checklist.value, checklist_md, checklist_citations),
+   170	        (GeneratedDocType.missing_items.value, missing_md, missing_citations),
+   171	        (GeneratedDocType.citation_appendix.value, appendix_md, appendix_citations),
+   172	    ]
+   173	    for doc_type, content_md, citations in specs:
+   174	        session.add(
+   175	            GeneratedDocument(
+   176	                org_id=ctx.org_id,
+   177	                filing_id=filing.id,
+   178	                type=doc_type,
+   179	                version=next_version,
+   180	                content_md=content_md,
+   181	                status=GeneratedDocStatus.draft.value,
+   182	                citations=citations,
+   183	                citation_validated=False,
+   184	            )
+   185	        )
+   186	
+   187	    filing.status = FilingStatus.packaging.value
+   188	    await session.flush()
+   189	    ctx.merge_results(version=next_version, documentsBuilt=len(specs))
+   190	
+   191	
+   192	async def _citation_appendix(
+   193	    session, org_id: uuid.UUID, citations: list[dict]
+   194	) -> tuple[str, list[dict]]:
+   195	    ev_ids = {uuid.UUID(c["evidence_item_id"]) for c in citations if c.get("evidence_item_id")}
+   196	    if not ev_ids:
+   197	        return "# Citation Appendix\n\nNo citations yet.", []
+   198	    items = (
+   199	        (
+   200	            await session.execute(
+   201	                select(EvidenceItem).where(
+   202	                    EvidenceItem.id.in_(ev_ids), EvidenceItem.org_id == org_id
+   203	                )
+   204	            )
+   205	        )
+   206	        .scalars()
+   207	        .all()
+   208	    )
+   209	    src_ids = {it.source_id for it in items if it.source_id}
+   210	    sources = (
+   211	        {
+   212	            s.id: s
+   213	            for s in (await session.execute(select(Source).where(Source.id.in_(src_ids))))
+   214	            .scalars()
+   215	            .all()
+   216	        }
+   217	        if src_ids
+   218	        else {}
+   219	    )
+   220	    rows = ["# Citation Appendix", ""]
+   221	    appendix_citations: list[dict] = []
+   222	    for i, item in enumerate(items, 1):
+   223	        src = sources.get(item.source_id)
+   224	        origin = f"{src.kind}: {src.title or src.url or src.id}" if src else "evidence vault"
+   225	        rows.append(f"[E{i}] {item.content[:280]} — _source: {origin}_")
+   226	        appendix_citations.append(
+   227	            {
+   228	                "evidence_item_id": str(item.id),
+   229	                "source_id": str(item.source_id) if item.source_id else None,
+   230	            }
+   231	        )
+   232	    return "\n".join(rows), appendix_citations
+   233	
+   234	
+   235	async def _latest_docs(session, filing_id: uuid.UUID) -> Sequence[GeneratedDocument]:
+   236	    version = (
+   237	        await session.execute(
+   238	            select(func.max(GeneratedDocument.version)).where(
+   239	                GeneratedDocument.filing_id == filing_id
+   240	            )
+   241	        )
+   242	    ).scalar_one()
+   243	    if version is None:
+   244	        return []
+   245	    return (
+   246	        (
+   247	            await session.execute(
+   248	                select(GeneratedDocument).where(
+   249	                    GeneratedDocument.filing_id == filing_id, GeneratedDocument.version == version
+   250	                )
+   251	            )
+   252	        )
+   253	        .scalars()
+   254	        .all()
+   255	    )
+   256	
+   257	
+   258	async def validate_citations(ctx: StepContext) -> None:
+   259	    """CON-2 gate: a document is citation_validated only when every citation resolves to a real
+   260	    evidence_item/source, and claim-bearing documents carry at least one such citation."""
+   261	    session = ctx.session
+   262	    filing = await _load_filing(ctx)
+   263	    docs = await _latest_docs(session, filing.id)
+   264	
+   265	    ev_ids = {
+   266	        str(i)
+   267	        for i in (
+   268	            await session.execute(select(EvidenceItem.id).where(EvidenceItem.org_id == ctx.org_id))
+   269	        )
+   270	        .scalars()
+   271	        .all()
+   272	    }
+   273	    src_ids = {
+   274	        str(i)
+   275	        for i in (await session.execute(select(Source.id).where(Source.org_id == ctx.org_id)))
+   276	        .scalars()
+   277	        .all()
+   278	    }
+   279	
+   280	    validated = 0
+   281	    for doc in docs:
+   282	        entries = doc.citations or []
+   283	        all_resolve = all(
+   284	            (c.get("evidence_item_id") in ev_ids) or (c.get("source_id") in src_ids)
+   285	            for c in entries
+   286	        )
+   287	        non_empty_ok = bool(entries) if doc.type in _CLAIM_BEARING else True
+   288	        doc.citation_validated = bool(all_resolve and non_empty_ok)
+   289	        doc.status = (
+   290	            GeneratedDocStatus.review.value
+   291	            if doc.citation_validated
+   292	            else GeneratedDocStatus.draft.value
+   293	        )
+   294	        if doc.citation_validated:
+   295	            validated += 1
+   296	
+   297	    filing.status = FilingStatus.package_review.value
+   298	    await session.flush()
+   299	    ctx.merge_results(
+   300	        validatedDocuments=validated,
+   301	        totalDocuments=len(docs),
+   302	        allCitationsValid=validated == len(docs) and len(docs) > 0,
+   303	    )
+
+exec
+/bin/zsh -lc "nl -ba apps/api/captureos/services/approvals.py | sed -n '1,220p'" in /Users/anishguntreddi/Documents/hackathon
+ succeeded in 0ms:
+     1	"""Human approval gate (FR-AP-1/2/3). Records the approval and advances (or returns) the
+     2	filing state machine. A recommendation is only 'pursue'-actionable once approved (CON-1 spirit)."""
+     3	
+     4	from __future__ import annotations
+     5	
+     6	import uuid
+     7	
+     8	from sqlalchemy import func, select
+     9	from sqlalchemy.ext.asyncio import AsyncSession
+    10	
+    11	from captureos.core.errors import ValidationFailed
+    12	from captureos.models.enums import (
+    13	    ApprovalDecision,
+    14	    ApprovalTarget,
+    15	    FilingStatus,
+    16	    GeneratedDocStatus,
+    17	)
+    18	from captureos.models.filings import Approval, Filing, GeneratedDocument, Recommendation
+    19	
+    20	
+    21	async def record_approval(
+    22	    session: AsyncSession,
+    23	    org_id: uuid.UUID,
+    24	    filing: Filing,
+    25	    *,
+    26	    target: str,
+    27	    decision: str,
+    28	    approver_user_id: uuid.UUID,
+    29	    notes: str | None = None,
+    30	) -> Filing:
+    31	    session.add(
+    32	        Approval(
+    33	            org_id=org_id,
+    34	            filing_id=filing.id,
+    35	            target=target,
+    36	            approver_user_id=approver_user_id,
+    37	            decision=decision,
+    38	            notes=notes,
+    39	        )
+    40	    )
+    41	    approved = decision == ApprovalDecision.approved.value
+    42	
+    43	    if target == ApprovalTarget.recommendation.value:
+    44	        rec = (
+    45	            await session.execute(
+    46	                select(Recommendation).where(Recommendation.filing_id == filing.id)
+    47	            )
+    48	        ).scalar_one_or_none()
+    49	        if rec is not None:
+    50	            rec.approved = approved
+    51	        # Approved → ready to package (FR-AP-1). Rejected → back to editable (FR-AP-3).
+    52	        filing.status = FilingStatus.approved.value if approved else FilingStatus.recommended.value
+    53	    elif target == ApprovalTarget.package.value:
+    54	        if approved:
+    55	            # CON-2 gate: the package can only become `ready` if every document in the latest
+    56	            # version passed the Audit/Citation check (no unsourced claims).
+    57	            version = (
+    58	                await session.execute(
+    59	                    select(func.max(GeneratedDocument.version)).where(
+    60	                        GeneratedDocument.filing_id == filing.id
+    61	                    )
+    62	                )
+    63	            ).scalar_one()
+    64	            if version is None:
+    65	                raise ValidationFailed("Build the package before approving it")
+    66	            docs = (
+    67	                (
+    68	                    await session.execute(
+    69	                        select(GeneratedDocument).where(
+    70	                            GeneratedDocument.filing_id == filing.id,
+    71	                            GeneratedDocument.version == version,
+    72	                        )
+    73	                    )
+    74	                )
+    75	                .scalars()
+    76	                .all()
+    77	            )
+    78	            if not docs or any(not d.citation_validated for d in docs):
+    79	                raise ValidationFailed(
+    80	                    "Package has unsourced claims and cannot be approved for export (CON-2)"
+    81	                )
+    82	            for doc in docs:
+    83	                doc.status = GeneratedDocStatus.ready.value
+    84	            filing.status = FilingStatus.ready.value
+    85	        else:
+    86	            filing.status = FilingStatus.package_review.value
+    87	
+    88	    await session.flush()
+    89	    return filing
+
+exec
+/bin/zsh -lc "nl -ba apps/api/captureos/services/export.py | sed -n '1,260p'" in /Users/anishguntreddi/Documents/hackathon
+exec
+/bin/zsh -lc "nl -ba apps/api/captureos/models/enums.py | sed -n '60,160p'" in /Users/anishguntreddi/Documents/hackathon
+exec
+/bin/zsh -lc "nl -ba apps/api/captureos/api/filings.py | sed -n '1,520p'" in /Users/anishguntreddi/Documents/hackathon
+ succeeded in 0ms:
+     1	"""Filing package export to Markdown / PDF / DOCX (FR-PB-5, CON-1).
+     2	
+     3	Export only ever produces a downloadable artifact; it never transmits to any external system."""
+     4	
+     5	from __future__ import annotations
+     6	
+     7	import io
+     8	import textwrap
+     9	
+    10	from docx import Document as DocxDocument
+    11	from fpdf import FPDF
+    12	
+    13	MEDIA_TYPES = {
+    14	    "md": "text/markdown",
+    15	    "pdf": "application/pdf",
+    16	    "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    17	}
+    18	
+    19	# Core PDF fonts are latin-1 only; transliterate the few non-latin1 glyphs we emit.
+    20	_LATIN1 = str.maketrans({"“": '"', "”": '"', "‘": "'", "’": "'", "–": "-", "—": "-", "•": "-"})
+    21	
+    22	
+    23	def _latinize(text: str) -> str:
+    24	    return text.translate(_LATIN1).encode("latin-1", "replace").decode("latin-1")
+    25	
+    26	
+    27	def _combined_markdown(title: str, docs: list[tuple[str, str]]) -> str:
+    28	    parts = [f"# {title}", ""]
+    29	    for _doc_type, content_md in docs:
+    30	        parts.append(content_md)
+    31	        parts.append("\n---\n")
+    32	    return "\n".join(parts)
+    33	
+    34	
+    35	def _emit(pdf: FPDF, text: str, *, size: int, bold: bool) -> None:
+    36	    # Wrap to a char width scaled to the font so even a long unbreakable token fits the page;
+    37	    # fpdf2 raises if a single glyph can't fit, so we never hand it an over-wide line.
+    38	    pdf.set_font("Helvetica", "B" if bold else "", size)
+    39	    width = max(24, int(880 / size))
+    40	    for chunk in textwrap.wrap(text, width=width, break_long_words=True) or [""]:
+    41	        pdf.set_x(pdf.l_margin)
+    42	        pdf.multi_cell(0, size * 0.55 + 1, _latinize(chunk) or " ")
+    43	
+    44	
+    45	def _render_pdf(title: str, docs: list[tuple[str, str]]) -> bytes:
+    46	    pdf = FPDF()
+    47	    pdf.set_auto_page_break(auto=True, margin=15)
+    48	    pdf.add_page()
+    49	    _emit(pdf, title, size=16, bold=True)
+    50	    pdf.ln(2)
+    51	    for _doc_type, content_md in docs:
+    52	        for line in content_md.splitlines():
+    53	            if line.startswith("# "):
+    54	                _emit(pdf, line[2:].strip(), size=14, bold=True)
+    55	            elif line.startswith("## "):
+    56	                _emit(pdf, line[3:].strip(), size=12, bold=True)
+    57	            else:
+    58	                _emit(pdf, line, size=10, bold=False)
+    59	        pdf.ln(3)
+    60	    return bytes(pdf.output())  # bytearray in fpdf2 >= 2.8
+    61	
+    62	
+    63	def _render_docx(title: str, docs: list[tuple[str, str]]) -> bytes:
+    64	    document = DocxDocument()
+    65	    document.add_heading(title, level=0)
+    66	    for _doc_type, content_md in docs:
+    67	        for line in content_md.splitlines():
+    68	            if line.startswith("## "):
+    69	                document.add_heading(line[3:].strip(), level=2)
+    70	            elif line.startswith("# "):
+    71	                document.add_heading(line[2:].strip(), level=1)
+    72	            elif line.strip().startswith(("- ", "* ")):
+    73	                document.add_paragraph(line.strip()[2:], style="List Bullet")
+    74	            elif line.strip():
+    75	                document.add_paragraph(line)
+    76	        document.add_page_break()
+    77	    buffer = io.BytesIO()
+    78	    document.save(buffer)
+    79	    return buffer.getvalue()
+    80	
+    81	
+    82	def render_export(fmt: str, title: str, docs: list[tuple[str, str]]) -> tuple[bytes, str, str]:
+    83	    """Return (bytes, media_type, filename) for the requested format."""
+    84	    safe_title = "".join(c if c.isalnum() else "_" for c in title)[:48] or "filing_package"
+    85	    if fmt == "md":
+    86	        return (
+    87	            _combined_markdown(title, docs).encode("utf-8"),
+    88	            MEDIA_TYPES["md"],
+    89	            f"{safe_title}.md",
+    90	        )
+    91	    if fmt == "pdf":
+    92	        return _render_pdf(title, docs), MEDIA_TYPES["pdf"], f"{safe_title}.pdf"
+    93	    if fmt == "docx":
+    94	        return _render_docx(title, docs), MEDIA_TYPES["docx"], f"{safe_title}.docx"
+    95	    raise ValueError(f"Unsupported export format: {fmt}")
+
+ succeeded in 0ms:
+    60	class OpportunityKind(StrEnum):
+    61	    gov_contract = "gov_contract"
+    62	    grant = "grant"
+    63	    # Future verticals (schema-ready, not implemented in MVP):
+    64	    permit = "permit"
+    65	    license = "license"
+    66	    certification = "certification"
+    67	    vendor_packet = "vendor_packet"
+    68	    compliance_packet = "compliance_packet"
+    69	
+    70	
+    71	class FilingStatus(StrEnum):
+    72	    draft = "draft"
+    73	    researching = "researching"
+    74	    evidence_review = "evidence_review"
+    75	    recommended = "recommended"
+    76	    approved = "approved"
+    77	    packaging = "packaging"
+    78	    package_review = "package_review"
+    79	    ready = "ready"
+    80	    archived = "archived"
+    81	    rejected = "rejected"
+    82	
+    83	
+    84	class RequirementCategory(StrEnum):
+    85	    eligibility = "eligibility"
+    86	    technical = "technical"
+    87	    past_performance = "past_performance"
+    88	    certification = "certification"
+    89	    formatting = "formatting"
+    90	    attachment = "attachment"
+    91	    other = "other"
+    92	
+    93	
+    94	class MatchStatus(StrEnum):
+    95	    matched = "matched"
+    96	    partial = "partial"
+    97	    missing = "missing"
+    98	    user_provided = "user_provided"
+    99	
+   100	
+   101	class RecommendationDecision(StrEnum):
+   102	    pursue = "pursue"
+   103	    do_not_pursue = "do_not_pursue"
+   104	
+   105	
+   106	class GeneratedDocType(StrEnum):
+   107	    compliance_matrix = "compliance_matrix"
+   108	    narrative = "narrative"
+   109	    capability_statement = "capability_statement"
+   110	    attachment_checklist = "attachment_checklist"
+   111	    missing_items = "missing_items"
+   112	    citation_appendix = "citation_appendix"
+   113	    proposal_outline = "proposal_outline"
+   114	    budget_checklist = "budget_checklist"
+   115	    submission_checklist = "submission_checklist"
+   116	
+   117	
+   118	class GeneratedDocStatus(StrEnum):
+   119	    draft = "draft"
+   120	    review = "review"
+   121	    ready = "ready"
+   122	
+   123	
+   124	class ApprovalTarget(StrEnum):
+   125	    recommendation = "recommendation"
+   126	    package = "package"
+   127	
+   128	
+   129	class ApprovalDecision(StrEnum):
+   130	    approved = "approved"
+   131	    rejected = "rejected"
+   132	
+   133	
+   134	class WorkflowType(StrEnum):
+   135	    company_brain = "company_brain"
+   136	    document_ingest = "document_ingest"
+   137	    opportunity_scan = "opportunity_scan"
+   138	    requirement_extraction = "requirement_extraction"
+   139	    evidence_match = "evidence_match"
+   140	    gap_resolution = "gap_resolution"
+   141	    recommendation = "recommendation"
+   142	    package_build = "package_build"
+   143	
+   144	
+   145	class WorkflowStatus(StrEnum):
+   146	    queued = "queued"
+   147	    running = "running"
+   148	    succeeded = "succeeded"
+   149	    failed = "failed"
+   150	    needs_input = "needs_input"
+   151	
+   152	
+   153	class StepStatus(StrEnum):
+   154	    pending = "pending"
+   155	    running = "running"
+   156	    done = "done"
+   157	    failed = "failed"
+   158	    skipped = "skipped"
+   159	
+   160	
+
+exec
+/bin/zsh -lc "nl -ba apps/api/captureos/models/filings.py | sed -n '1,260p'" in /Users/anishguntreddi/Documents/hackathon
+ succeeded in 0ms:
+     1	"""Filing routes (PRD §9.5): create, list, the action sub-paths, and the full aggregate.
+     2	
+     3	Actions use slash sub-paths (e.g. ``/{filing_id}/extract-requirements``) rather than the PRD's
+     4	colon-suffix style: uvicorn's HTTP parser mangles a ``:`` inside a path segment for some action
+     5	names, so the colon form is unreliable in production (see tests/test_routes.py)."""
+     6	
+     7	from __future__ import annotations
+     8	
+     9	import uuid
+    10	
+    11	from fastapi import APIRouter, BackgroundTasks, Query, Response, status
+    12	from sqlalchemy import func, select
+    13	
+    14	from captureos.audit import record_event
+    15	from captureos.core.deps import OrgEditor, OrgViewer, SessionDep
+    16	from captureos.core.errors import NotFoundError, ValidationFailed
+    17	from captureos.models.enums import (
+    18	    ActorType,
+    19	    ApprovalDecision,
+    20	    ApprovalTarget,
+    21	    FilingStatus,
+    22	    WorkflowType,
+    23	)
+    24	from captureos.models.filings import (
+    25	    Approval,
+    26	    Filing,
+    27	    FilingRequirement,
+    28	    GeneratedDocument,
+    29	    Recommendation,
+    30	)
+    31	from captureos.models.opportunities import Opportunity
+    32	from captureos.models.workflow import WorkflowRun
+    33	from captureos.schemas.filing import (
+    34	    ApprovalRequest,
+    35	    ApprovalResponse,
+    36	    ComplianceRow,
+    37	    FilingAggregate,
+    38	    FilingCreate,
+    39	    FilingResponse,
+    40	    GapResolveRequest,
+    41	    GeneratedDocSummary,
+    42	    PackageView,
+    43	    RecommendationResponse,
+    44	    RequirementResponse,
+    45	)
+    46	from captureos.schemas.opportunity import OpportunitySummary
+    47	from captureos.schemas.workflow import WorkflowRunCreated
+    48	from captureos.services.approvals import record_approval
+    49	from captureos.services.compliance import build_compliance_matrix, gap_rows, match_summary
+    50	from captureos.services.export import render_export
+    51	from captureos.services.filings import create_filing
+    52	from captureos.workflows.dispatch import dispatch_run
+    53	
+    54	router = APIRouter(prefix="/orgs/{org_id}/filings", tags=["filings"])
+    55	
+    56	_VALID_DECISIONS = {ApprovalDecision.approved.value, ApprovalDecision.rejected.value}
+    57	_VALID_TARGETS = {ApprovalTarget.recommendation.value, ApprovalTarget.package.value}
+    58	# A filing must have an approved recommendation before (re)building a package.
+    59	_PACKAGEABLE = {
+    60	    FilingStatus.approved.value,
+    61	    FilingStatus.packaging.value,
+    62	    FilingStatus.package_review.value,
+    63	    FilingStatus.ready.value,
+    64	}
+    65	
+    66	
+    67	async def _latest_package_docs(
+    68	    session: SessionDep, filing_id: uuid.UUID
+    69	) -> tuple[int | None, list[GeneratedDocument]]:
+    70	    version = (
+    71	        await session.execute(
+    72	            select(func.max(GeneratedDocument.version)).where(
+    73	                GeneratedDocument.filing_id == filing_id
+    74	            )
+    75	        )
+    76	    ).scalar_one()
+    77	    if version is None:
+    78	        return None, []
+    79	    docs = (
+    80	        (
+    81	            await session.execute(
+    82	                select(GeneratedDocument)
+    83	                .where(
+    84	                    GeneratedDocument.filing_id == filing_id, GeneratedDocument.version == version
+    85	                )
+    86	                .order_by(GeneratedDocument.type)
+    87	            )
+    88	        )
+    89	        .scalars()
+    90	        .all()
+    91	    )
+    92	    return version, list(docs)
+    93	
+    94	
+    95	def _doc_summary(doc: GeneratedDocument, *, with_content: bool) -> GeneratedDocSummary:
+    96	    return GeneratedDocSummary(
+    97	        id=doc.id,
+    98	        type=doc.type,
+    99	        version=doc.version,
+   100	        status=doc.status,
+   101	        citation_validated=doc.citation_validated,
+   102	        citation_count=len(doc.citations or []),
+   103	        content_md=doc.content_md if with_content else None,
+   104	    )
+   105	
+   106	
+   107	def _filing_response(filing: Filing) -> FilingResponse:
+   108	    return FilingResponse(
+   109	        id=filing.id,
+   110	        opportunity_id=filing.opportunity_id,
+   111	        kind=filing.kind,
+   112	        status=filing.status,
+   113	        owner_user_id=filing.owner_user_id,
+   114	        created_at=filing.created_at,
+   115	    )
+   116	
+   117	
+   118	async def _get_filing_or_404(
+   119	    session: SessionDep, org_id: uuid.UUID, filing_id: uuid.UUID
+   120	) -> Filing:
+   121	    filing = (
+   122	        await session.execute(select(Filing).where(Filing.id == filing_id, Filing.org_id == org_id))
+   123	    ).scalar_one_or_none()
+   124	    if filing is None:
+   125	        raise NotFoundError("Filing not found")
+   126	    return filing
+   127	
+   128	
+   129	async def _dispatch(
+   130	    ctx: OrgEditor,
+   131	    session: SessionDep,
+   132	    background_tasks: BackgroundTasks,
+   133	    filing: Filing,
+   134	    wtype: str,
+   135	    params: dict,
+   136	) -> WorkflowRunCreated:
+   137	    run = WorkflowRun(
+   138	        org_id=ctx.org_id,
+   139	        filing_id=filing.id,
+   140	        type=wtype,
+   141	        status="queued",
+   142	        input_params={"filing_id": str(filing.id), **params},
+   143	    )
+   144	    session.add(run)
+   145	    await session.flush()
+   146	    await dispatch_run(session, background_tasks, run)
+   147	    return WorkflowRunCreated(workflow_run_id=run.id)
+   148	
+   149	
+   150	@router.post("", response_model=FilingResponse, status_code=status.HTTP_201_CREATED)
+   151	async def create(body: FilingCreate, ctx: OrgEditor, session: SessionDep) -> FilingResponse:
+   152	    filing = await create_filing(session, ctx.org_id, body.opportunity_id, ctx.user.id)
+   153	    await record_event(
+   154	        "filing.created",
+   155	        org_id=ctx.org_id,
+   156	        filing_id=filing.id,
+   157	        actor=ActorType.user,
+   158	        actor_id=str(ctx.user.id),
+   159	        payload={"opportunity_id": str(body.opportunity_id)},
+   160	    )
+   161	    return _filing_response(filing)
+   162	
+   163	
+   164	@router.get("", response_model=list[FilingResponse])
+   165	async def list_filings(ctx: OrgViewer, session: SessionDep) -> list[FilingResponse]:
+   166	    filings = (
+   167	        (
+   168	            await session.execute(
+   169	                select(Filing).where(Filing.org_id == ctx.org_id).order_by(Filing.created_at.desc())
+   170	            )
+   171	        )
+   172	        .scalars()
+   173	        .all()
+   174	    )
+   175	    return [_filing_response(f) for f in filings]
+   176	
+   177	
+   178	@router.post(
+   179	    "/{filing_id}/extract-requirements",
+   180	    response_model=WorkflowRunCreated,
+   181	    status_code=status.HTTP_202_ACCEPTED,
+   182	)
+   183	async def extract_requirements(
+   184	    ctx: OrgEditor, session: SessionDep, background_tasks: BackgroundTasks, filing_id: uuid.UUID
+   185	) -> WorkflowRunCreated:
+   186	    filing = await _get_filing_or_404(session, ctx.org_id, filing_id)
+   187	    return await _dispatch(
+   188	        ctx, session, background_tasks, filing, WorkflowType.requirement_extraction.value, {}
+   189	    )
+   190	
+   191	
+   192	@router.post(
+   193	    "/{filing_id}/match-evidence",
+   194	    response_model=WorkflowRunCreated,
+   195	    status_code=status.HTTP_202_ACCEPTED,
+   196	)
+   197	async def match_evidence(
+   198	    ctx: OrgEditor, session: SessionDep, background_tasks: BackgroundTasks, filing_id: uuid.UUID
+   199	) -> WorkflowRunCreated:
+   200	    filing = await _get_filing_or_404(session, ctx.org_id, filing_id)
+   201	    return await _dispatch(
+   202	        ctx, session, background_tasks, filing, WorkflowType.evidence_match.value, {}
+   203	    )
+   204	
+   205	
+   206	@router.post(
+   207	    "/{filing_id}/recommend",
+   208	    response_model=WorkflowRunCreated,
+   209	    status_code=status.HTTP_202_ACCEPTED,
+   210	)
+   211	async def recommend(
+   212	    ctx: OrgEditor, session: SessionDep, background_tasks: BackgroundTasks, filing_id: uuid.UUID
+   213	) -> WorkflowRunCreated:
+   214	    filing = await _get_filing_or_404(session, ctx.org_id, filing_id)
+   215	    return await _dispatch(
+   216	        ctx, session, background_tasks, filing, WorkflowType.recommendation.value, {}
+   217	    )
+   218	
+   219	
+   220	@router.post(
+   221	    "/{filing_id}/gaps/{requirement_id}/resolve",
+   222	    response_model=WorkflowRunCreated,
+   223	    status_code=status.HTTP_202_ACCEPTED,
+   224	)
+   225	async def resolve_gap(
+   226	    body: GapResolveRequest,
+   227	    ctx: OrgEditor,
+   228	    session: SessionDep,
+   229	    background_tasks: BackgroundTasks,
+   230	    filing_id: uuid.UUID,
+   231	    requirement_id: uuid.UUID,
+   232	) -> WorkflowRunCreated:
+   233	    if not body.value and not body.document_id:
+   234	        raise ValidationFailed("Provide a value or a documentId to resolve the gap")
+   235	    filing = await _get_filing_or_404(session, ctx.org_id, filing_id)
+   236	    params: dict = {"requirement_id": str(requirement_id)}
+   237	    if body.value:
+   238	        params["value"] = body.value
+   239	    if body.document_id:
+   240	        params["document_id"] = str(body.document_id)
+   241	    return await _dispatch(
+   242	        ctx, session, background_tasks, filing, WorkflowType.gap_resolution.value, params
+   243	    )
+   244	
+   245	
+   246	@router.post("/{filing_id}/approvals", response_model=FilingResponse)
+   247	async def approve(
+   248	    body: ApprovalRequest, ctx: OrgEditor, session: SessionDep, filing_id: uuid.UUID
+   249	) -> FilingResponse:
+   250	    if body.decision not in _VALID_DECISIONS:
+   251	        raise ValidationFailed(f"decision must be one of {sorted(_VALID_DECISIONS)}")
+   252	    if body.target not in _VALID_TARGETS:
+   253	        raise ValidationFailed(f"target must be one of {sorted(_VALID_TARGETS)}")
+   254	    filing = await _get_filing_or_404(session, ctx.org_id, filing_id)
+   255	    filing = await record_approval(
+   256	        session,
+   257	        ctx.org_id,
+   258	        filing,
+   259	        target=body.target,
+   260	        decision=body.decision,
+   261	        approver_user_id=ctx.user.id,
+   262	        notes=body.notes,
+   263	    )
+   264	    await record_event(
+   265	        "filing.approval",
+   266	        org_id=ctx.org_id,
+   267	        filing_id=filing.id,
+   268	        actor=ActorType.user,
+   269	        actor_id=str(ctx.user.id),
+   270	        payload={"target": body.target, "decision": body.decision},
+   271	    )
+   272	    return _filing_response(filing)
+   273	
+   274	
+   275	@router.post(
+   276	    "/{filing_id}/build-package",
+   277	    response_model=WorkflowRunCreated,
+   278	    status_code=status.HTTP_202_ACCEPTED,
+   279	)
+   280	async def build_package(
+   281	    ctx: OrgEditor, session: SessionDep, background_tasks: BackgroundTasks, filing_id: uuid.UUID
+   282	) -> WorkflowRunCreated:
+   283	    filing = await _get_filing_or_404(session, ctx.org_id, filing_id)
+   284	    if filing.status not in _PACKAGEABLE:
+   285	        # The recommendation must be human-approved before a package can be built (FR-AP-1).
+   286	        raise ValidationFailed("Approve the recommendation before building the package")
+   287	    return await _dispatch(
+   288	        ctx, session, background_tasks, filing, WorkflowType.package_build.value, {}
+   289	    )
+   290	
+   291	
+   292	@router.get("/{filing_id}/package", response_model=PackageView)
+   293	async def get_package(ctx: OrgViewer, session: SessionDep, filing_id: uuid.UUID) -> PackageView:
+   294	    filing = await _get_filing_or_404(session, ctx.org_id, filing_id)
+   295	    version, docs = await _latest_package_docs(session, filing_id)
+   296	    all_valid = bool(docs) and all(d.citation_validated for d in docs)
+   297	    return PackageView(
+   298	        filing_id=filing.id,
+   299	        status=filing.status,
+   300	        version=version,
+   301	        documents=[_doc_summary(d, with_content=True) for d in docs],
+   302	        all_citations_valid=all_valid,
+   303	        can_approve=filing.status == FilingStatus.package_review.value and all_valid,
+   304	        can_export=filing.status == FilingStatus.ready.value,
+   305	    )
+   306	
+   307	
+   308	@router.post("/{filing_id}/export")
+   309	async def export_package(
+   310	    ctx: OrgViewer,
+   311	    session: SessionDep,
+   312	    filing_id: uuid.UUID,
+   313	    format: str = Query("md", pattern="^(md|pdf|docx)$"),
+   314	) -> Response:
+   315	    filing = await _get_filing_or_404(session, ctx.org_id, filing_id)
+   316	    # CON-1/CON-2: export is gated behind human package approval; it only ever returns a download.
+   317	    if filing.status != FilingStatus.ready.value:
+   318	        raise ValidationFailed("Package must be approved (status=ready) before export")
+   319	    _version, docs = await _latest_package_docs(session, filing_id)
+   320	    if not docs:
+   321	        raise NotFoundError("No package to export")
+   322	    opp = await session.get(Opportunity, filing.opportunity_id)
+   323	    title = (opp.title if opp else filing.kind) + " — Filing Package"
+   324	    payload, media_type, filename = render_export(
+   325	        format, title, [(d.type, d.content_md) for d in docs]
+   326	    )
+   327	    await record_event(
+   328	        "filing.exported",
+   329	        org_id=ctx.org_id,
+   330	        filing_id=filing.id,
+   331	        actor=ActorType.user,
+   332	        actor_id=str(ctx.user.id),
+   333	        payload={"format": format, "documents": len(docs)},
+   334	    )
+   335	    return Response(
+   336	        content=payload,
+   337	        media_type=media_type,
+   338	        headers={"content-disposition": f'attachment; filename="{filename}"'},
+   339	    )
+   340	
+   341	
+   342	@router.get("/{filing_id}", response_model=FilingAggregate)
+   343	async def get_filing(ctx: OrgViewer, session: SessionDep, filing_id: uuid.UUID) -> FilingAggregate:
+   344	    filing = await _get_filing_or_404(session, ctx.org_id, filing_id)
+   345	    opp = await session.get(Opportunity, filing.opportunity_id)
+   346	    requirements = (
+   347	        (
+   348	            await session.execute(
+   349	                select(FilingRequirement)
+   350	                .where(FilingRequirement.filing_id == filing_id)
+   351	                .order_by(FilingRequirement.category, FilingRequirement.created_at)
+   352	            )
+   353	        )
+   354	        .scalars()
+   355	        .all()
+   356	    )
+   357	
+   358	    matrix = await build_compliance_matrix(session, filing_id)
+   359	    compliance = [ComplianceRow(**row) for row in matrix]
+   360	    gaps = [ComplianceRow(**row) for row in gap_rows(matrix)]
+   361	
+   362	    _version, package_docs = await _latest_package_docs(session, filing_id)
+   363	
+   364	    rec = (
+   365	        await session.execute(select(Recommendation).where(Recommendation.filing_id == filing_id))
+   366	    ).scalar_one_or_none()
+   367	    approvals = (
+   368	        (
+   369	            await session.execute(
+   370	                select(Approval)
+   371	                .where(Approval.filing_id == filing_id)
+   372	                .order_by(Approval.created_at)
+   373	            )
+   374	        )
+   375	        .scalars()
+   376	        .all()
+   377	    )
+   378	
+   379	    opp_summary = (
+   380	        OpportunitySummary(
+   381	            id=opp.id,
+   382	            kind=opp.kind,
+   383	            title=opp.title,
+   384	            sponsor=opp.sponsor,
+   385	            deadline=opp.deadline,
+   386	            fit_score=float(opp.fit_score) if opp.fit_score is not None else None,
+   387	            decision_hint=opp.decision_hint,
+   388	            source_url=opp.details.get("source_url"),
+   389	        )
+   390	        if opp is not None
+   391	        else None
+   392	    )
+   393	    return FilingAggregate(
+   394	        filing=_filing_response(filing),
+   395	        opportunity=opp_summary,
+   396	        requirements=[
+   397	            RequirementResponse(
+   398	                id=r.id,
+   399	                text=r.text,
+   400	                category=r.category,
+   401	                mandatory=r.mandatory,
+   402	                locator=r.locator,
+   403	                needs_review=r.needs_review,
+   404	                source_id=r.source_id,
+   405	            )
+   406	            for r in requirements
+   407	        ],
+   408	        requirement_count=len(requirements),
+   409	        status=filing.status,
+   410	        compliance_matrix=compliance,
+   411	        gap_list=gaps,
+   412	        match_summary=match_summary(matrix),
+   413	        recommendation=(
+   414	            RecommendationResponse(
+   415	                decision=rec.decision,
+   416	                score=float(rec.score) if rec.score is not None else None,
+   417	                rationale=rec.rationale,
+   418	                approved=rec.approved,
+   419	            )
+   420	            if rec is not None
+   421	            else None
+   422	        ),
+   423	        approvals=[
+   424	            ApprovalResponse(
+   425	                target=a.target, decision=a.decision, notes=a.notes, created_at=a.created_at
+   426	            )
+   427	            for a in approvals
+   428	        ],
+   429	        generated_documents=[_doc_summary(d, with_content=False) for d in package_docs],
+   430	        package_ready=filing.status == FilingStatus.ready.value,
+   431	    )
+
+ succeeded in 0ms:
+     1	"""The Filing aggregate and everything that hangs off it (PRD §8, central object)."""
+     2	
+     3	from __future__ import annotations
+     4	
+     5	import uuid
+     6	
+     7	from sqlalchemy import Boolean, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
+     8	from sqlalchemy.dialects.postgresql import JSONB
+     9	from sqlalchemy.dialects.postgresql import UUID as PGUUID
+    10	from sqlalchemy.orm import Mapped, mapped_column, relationship
+    11	
+    12	from captureos.db.base import Base, OrgScopedMixin, TimestampMixin, UUIDPKMixin
+    13	from captureos.models.enums import (
+    14	    ApprovalDecision,
+    15	    ApprovalTarget,
+    16	    FilingStatus,
+    17	    GeneratedDocStatus,
+    18	    GeneratedDocType,
+    19	    MatchStatus,
+    20	    RecommendationDecision,
+    21	    RequirementCategory,
+    22	)
+    23	
+    24	
+    25	class Filing(UUIDPKMixin, OrgScopedMixin, TimestampMixin, Base):
+    26	    __tablename__ = "filings"
+    27	
+    28	    opportunity_id: Mapped[uuid.UUID] = mapped_column(
+    29	        PGUUID(as_uuid=True),
+    30	        ForeignKey("opportunities.id", ondelete="CASCADE"),
+    31	        nullable=False,
+    32	        index=True,
+    33	    )
+    34	    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    35	    status: Mapped[str] = mapped_column(
+    36	        String(32), nullable=False, default=FilingStatus.draft.value, index=True
+    37	    )
+    38	    owner_user_id: Mapped[uuid.UUID | None] = mapped_column(
+    39	        PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    40	    )
+    41	
+    42	    requirements: Mapped[list[FilingRequirement]] = relationship(
+    43	        back_populates="filing", cascade="all, delete-orphan"
+    44	    )
+    45	    evidence_matches: Mapped[list[EvidenceMatch]] = relationship(
+    46	        back_populates="filing", cascade="all, delete-orphan"
+    47	    )
+    48	    recommendation: Mapped[Recommendation | None] = relationship(
+    49	        back_populates="filing", cascade="all, delete-orphan", uselist=False
+    50	    )
+    51	    generated_documents: Mapped[list[GeneratedDocument]] = relationship(
+    52	        back_populates="filing", cascade="all, delete-orphan"
+    53	    )
+    54	    approvals: Mapped[list[Approval]] = relationship(
+    55	        back_populates="filing", cascade="all, delete-orphan"
+    56	    )
+    57	
+    58	
+    59	class FilingRequirement(UUIDPKMixin, OrgScopedMixin, TimestampMixin, Base):
+    60	    __tablename__ = "filing_requirements"
+    61	
+    62	    filing_id: Mapped[uuid.UUID] = mapped_column(
+    63	        PGUUID(as_uuid=True),
+    64	        ForeignKey("filings.id", ondelete="CASCADE"),
+    65	        nullable=False,
+    66	        index=True,
+    67	    )
+    68	    text: Mapped[str] = mapped_column(Text, nullable=False)
+    69	    category: Mapped[str] = mapped_column(
+    70	        String(32), nullable=False, default=RequirementCategory.other.value
+    71	    )
+    72	    mandatory: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    73	    # Citation back to the solicitation (CON-2).
+    74	    source_id: Mapped[uuid.UUID | None] = mapped_column(
+    75	        PGUUID(as_uuid=True), ForeignKey("sources.id", ondelete="SET NULL"), nullable=True
+    76	    )
+    77	    locator: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    78	    # Flagged-for-review when extraction confidence is low / schema-retry exhausted (FR-RE-2).
+    79	    needs_review: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    80	
+    81	    filing: Mapped[Filing] = relationship(back_populates="requirements")
+    82	
+    83	
+    84	class EvidenceMatch(UUIDPKMixin, OrgScopedMixin, TimestampMixin, Base):
+    85	    __tablename__ = "evidence_matches"
+    86	
+    87	    filing_id: Mapped[uuid.UUID] = mapped_column(
+    88	        PGUUID(as_uuid=True),
+    89	        ForeignKey("filings.id", ondelete="CASCADE"),
+    90	        nullable=False,
+    91	        index=True,
+    92	    )
+    93	    requirement_id: Mapped[uuid.UUID] = mapped_column(
+    94	        PGUUID(as_uuid=True),
+    95	        ForeignKey("filing_requirements.id", ondelete="CASCADE"),
+    96	        nullable=False,
+    97	        index=True,
+    98	    )
+    99	    evidence_item_id: Mapped[uuid.UUID | None] = mapped_column(
+   100	        PGUUID(as_uuid=True),
+   101	        ForeignKey("evidence_items.id", ondelete="SET NULL"),
+   102	        nullable=True,
+   103	    )
+   104	    score: Mapped[float] = mapped_column(Numeric(5, 4), nullable=False, default=0)
+   105	    status: Mapped[str] = mapped_column(
+   106	        String(16), nullable=False, default=MatchStatus.missing.value, index=True
+   107	    )
+   108	    rationale: Mapped[str | None] = mapped_column(Text, nullable=True)
+   109	
+   110	    filing: Mapped[Filing] = relationship(back_populates="evidence_matches")
+   111	
+   112	
+   113	class Recommendation(UUIDPKMixin, OrgScopedMixin, TimestampMixin, Base):
+   114	    __tablename__ = "recommendations"
+   115	    # One current recommendation per filing (avoids the PRD's circular FK).
+   116	    __table_args__ = (UniqueConstraint("filing_id"),)
+   117	
+   118	    filing_id: Mapped[uuid.UUID] = mapped_column(
+   119	        PGUUID(as_uuid=True),
+   120	        ForeignKey("filings.id", ondelete="CASCADE"),
+   121	        nullable=False,
+   122	        index=True,
+   123	    )
+   124	    decision: Mapped[str] = mapped_column(
+   125	        String(16), nullable=False, default=RecommendationDecision.do_not_pursue.value
+   126	    )
+   127	    score: Mapped[float] = mapped_column(Numeric(5, 2), nullable=False, default=0)
+   128	    # {for: [...], against: [...], key_gaps: [...]} each item carrying citations (CON-2).
+   129	    rationale: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+   130	    # Draft until a human approves (FR-AP-1 / FR-RC-3).
+   131	    approved: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+   132	
+   133	    filing: Mapped[Filing] = relationship(back_populates="recommendation")
+   134	
+   135	
+   136	class GeneratedDocument(UUIDPKMixin, OrgScopedMixin, TimestampMixin, Base):
+   137	    __tablename__ = "generated_documents"
+   138	    __table_args__ = (UniqueConstraint("filing_id", "type", "version"),)
+   139	
+   140	    filing_id: Mapped[uuid.UUID] = mapped_column(
+   141	        PGUUID(as_uuid=True),
+   142	        ForeignKey("filings.id", ondelete="CASCADE"),
+   143	        nullable=False,
+   144	        index=True,
+   145	    )
+   146	    type: Mapped[str] = mapped_column(
+   147	        String(32), nullable=False, default=GeneratedDocType.narrative.value
+   148	    )
+   149	    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+   150	    content_md: Mapped[str] = mapped_column(Text, nullable=False, default="")
+   151	    export_uri: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+   152	    status: Mapped[str] = mapped_column(
+   153	        String(16), nullable=False, default=GeneratedDocStatus.draft.value
+   154	    )
+   155	    # Citations resolved for this doc; the Audit/Citation agent populates/validates this.
+   156	    citations: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+   157	    # True only after the Audit/Citation check confirms zero unsourced claims (CON-2).
+   158	    citation_validated: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+   159	
+   160	    filing: Mapped[Filing] = relationship(back_populates="generated_documents")
+   161	
+   162	
+   163	class Approval(UUIDPKMixin, OrgScopedMixin, TimestampMixin, Base):
+   164	    __tablename__ = "approvals"
+   165	
+   166	    filing_id: Mapped[uuid.UUID] = mapped_column(
+   167	        PGUUID(as_uuid=True),
+   168	        ForeignKey("filings.id", ondelete="CASCADE"),
+   169	        nullable=False,
+   170	        index=True,
+   171	    )
+   172	    target: Mapped[str] = mapped_column(
+   173	        String(16), nullable=False, default=ApprovalTarget.recommendation.value
+   174	    )
+   175	    approver_user_id: Mapped[uuid.UUID] = mapped_column(
+   176	        PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+   177	    )
+   178	    decision: Mapped[str] = mapped_column(
+   179	        String(16), nullable=False, default=ApprovalDecision.approved.value
+   180	    )
+   181	    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+   182	
+   183	    filing: Mapped[Filing] = relationship(back_populates="approvals")
+
+codex
+The core code is in place now. I’m checking the weaker spots next: whether citation validation proves anything about the actual prose, whether approval transitions are constrained, and whether export/render paths can be forced into bad states or excessive memory use.
+exec
+/bin/zsh -lc "nl -ba apps/api/captureos/agents/narrative.py | sed -n '1,320p'" in /Users/anishguntreddi/Documents/hackathon
+ succeeded in 0ms:
+     1	"""Narrative Generation agent (PRD agent #9, FR-PB-2). Drafts a response narrative per
+     2	satisfied requirement where EVERY claim carries a citation to a specific evidence item (CON-2).
+     3	
+     4	Mock = deterministic template stitch from matched/user_provided evidence. The agent never
+     5	invents support: each section is built only from the evidence it was handed, and emits the
+     6	matching citation marker so the Audit/Citation step can verify it resolves."""
+     7	
+     8	from __future__ import annotations
+     9	
+    10	from pydantic import BaseModel, Field
+    11	
+    12	from captureos.agents.base import Agent, AgentContext
+    13	from captureos.providers import ModelTier
+    14	
+    15	
+    16	class NarrativeRequirement(BaseModel):
+    17	    requirement: str
+    18	    category: str = "other"
+    19	    evidence: str
+    20	    marker: str  # e.g. "E1" — ties the claim to a citation entry
+    21	    evidence_item_id: str
+    22	    source_id: str | None = None
+    23	
+    24	
+    25	class NarrativeGenerationInput(BaseModel):
+    26	    company_name: str
+    27	    requirements: list[NarrativeRequirement] = Field(default_factory=list)
+    28	
+    29	
+    30	class NarrativeSection(BaseModel):
+    31	    requirement: str
+    32	    text: str
+    33	    citations: list[dict] = Field(default_factory=list)
+    34	
+    35	
+    36	class NarrativeGenerationOutput(BaseModel):
+    37	    sections: list[NarrativeSection] = Field(default_factory=list)
+    38	
+    39	
+    40	class NarrativeGenerationAgent(Agent[NarrativeGenerationInput, NarrativeGenerationOutput]):
+    41	    name = "narrative_generation"
+    42	    tier = ModelTier.pro
+    43	    output_model = NarrativeGenerationOutput
+    44	    system_prompt = (
+    45	        "You draft proposal/grant response narratives. For each requirement, write 1-2 sentences "
+    46	        "grounded ONLY in the supplied evidence, and end each claim with its citation marker (e.g. "
+    47	        "[E1]). Never assert anything not backed by an evidence item. JSON only."
+    48	    )
+    49	
+    50	    def build_prompt(self, data: NarrativeGenerationInput) -> str:
+    51	        lines = "\n".join(
+    52	            f"- [{r.marker}] ({r.category}) requirement: {r.requirement}\n"
+    53	            f"  evidence: {r.evidence[:300]}"
+    54	            for r in data.requirements
+    55	        )
+    56	        return (
+    57	            f"Company: {data.company_name}\n\nSatisfied requirements + evidence:\n{lines}\n\n"
+    58	            "Return sections[], each with the requirement, narrative text citing its marker, and "
+    59	            "citations[] (marker, evidence_item_id, source_id)."
+    60	        )
+    61	
+    62	    async def mock_output(
+    63	        self, ctx: AgentContext, data: NarrativeGenerationInput
+    64	    ) -> NarrativeGenerationOutput:
+    65	        sections: list[NarrativeSection] = []
+    66	        for req in data.requirements:
+    67	            text = (
+    68	                f"{data.company_name} satisfies the {req.category} requirement "
+    69	                f"“{req.requirement}”. {req.evidence.rstrip('.')}. [{req.marker}]"
+    70	            )
+    71	            sections.append(
+    72	                NarrativeSection(
+    73	                    requirement=req.requirement,
+    74	                    text=text,
+    75	                    citations=[
+    76	                        {
+    77	                            "marker": req.marker,
+    78	                            "evidence_item_id": req.evidence_item_id,
+    79	                            "source_id": req.source_id,
+    80	                        }
+    81	                    ],
+    82	                )
+    83	            )
+    84	        return NarrativeGenerationOutput(sections=sections)
+
+exec
+/bin/zsh -lc "nl -ba apps/api/captureos/workflows/pipelines.py | sed -n '1,180p'" in /Users/anishguntreddi/Documents/hackathon
+exec
+/bin/zsh -lc "nl -ba apps/api/captureos/services/compliance.py | sed -n '1,320p'" in /Users/anishguntreddi/Documents/hackathon
+ succeeded in 0ms:
+     1	"""Compliance matrix: the live filing_requirements ⋈ evidence_matches view (FR-EM-4).
+     2	
+     3	Computed on read so it always reflects the current match state. A gap is any row whose status
+     4	is partial or missing."""
+     5	
+     6	from __future__ import annotations
+     7	
+     8	import uuid
+     9	
+    10	from sqlalchemy import select
+    11	from sqlalchemy.ext.asyncio import AsyncSession
+    12	
+    13	from captureos.models.enums import MatchStatus
+    14	from captureos.models.evidence import EvidenceItem
+    15	from captureos.models.filings import EvidenceMatch, FilingRequirement
+    16	
+    17	_GAP_STATUSES = (MatchStatus.partial.value, MatchStatus.missing.value)
+    18	
+    19	
+    20	async def build_compliance_matrix(session: AsyncSession, filing_id: uuid.UUID) -> list[dict]:
+    21	    requirements = (
+    22	        (
+    23	            await session.execute(
+    24	                select(FilingRequirement)
+    25	                .where(FilingRequirement.filing_id == filing_id)
+    26	                .order_by(FilingRequirement.category, FilingRequirement.created_at)
+    27	            )
+    28	        )
+    29	        .scalars()
+    30	        .all()
+    31	    )
+    32	    matches = {
+    33	        m.requirement_id: m
+    34	        for m in (
+    35	            await session.execute(select(EvidenceMatch).where(EvidenceMatch.filing_id == filing_id))
+    36	        )
+    37	        .scalars()
+    38	        .all()
+    39	    }
+    40	    evidence_ids = [m.evidence_item_id for m in matches.values() if m.evidence_item_id]
+    41	    evidence = {}
+    42	    if evidence_ids:
+    43	        evidence = {
+    44	            e.id: e
+    45	            for e in (
+    46	                await session.execute(select(EvidenceItem).where(EvidenceItem.id.in_(evidence_ids)))
+    47	            )
+    48	            .scalars()
+    49	            .all()
+    50	        }
+    51	
+    52	    rows: list[dict] = []
+    53	    for req in requirements:
+    54	        match = matches.get(req.id)
+    55	        status = match.status if match else MatchStatus.missing.value
+    56	        ev = evidence.get(match.evidence_item_id) if match and match.evidence_item_id else None
+    57	        rows.append(
+    58	            {
+    59	                "requirement_id": req.id,
+    60	                "requirement": req.text,
+    61	                "category": req.category,
+    62	                "mandatory": req.mandatory,
+    63	                "locator": req.locator,
+    64	                "source_id": req.source_id,
+    65	                "status": status,
+    66	                "score": float(match.score) if match else 0.0,
+    67	                "evidence": ev.content if ev else None,
+    68	                "evidence_item_id": ev.id if ev else None,
+    69	                "rationale": match.rationale if match else None,
+    70	            }
+    71	        )
+    72	    return rows
+    73	
+    74	
+    75	def gap_rows(matrix: list[dict]) -> list[dict]:
+    76	    return [r for r in matrix if r["status"] in _GAP_STATUSES]
+    77	
+    78	
+    79	def match_summary(matrix: list[dict]) -> dict[str, int]:
+    80	    summary = {"matched": 0, "partial": 0, "missing": 0, "user_provided": 0}
+    81	    for row in matrix:
+    82	        summary[row["status"]] = summary.get(row["status"], 0) + 1
+    83	    return summary
+
+ succeeded in 0ms:
+     1	"""Pipeline registry: maps a workflow type to its ordered steps. Steps in a pipeline
+     2	share local state via closures (avoids leaking working data into client-visible results)."""
+     3	
+     4	from __future__ import annotations
+     5	
+     6	from captureos.models.enums import WorkflowType
+     7	from captureos.models.workflow import WorkflowRun
+     8	from captureos.services.company_brain import gather_company_sources, run_company_brain
+     9	from captureos.services.documents import run_document_ingest
+    10	from captureos.services.evidence import acquire_evidence, map_evidence
+    11	from captureos.services.filings import run_requirement_extraction
+    12	from captureos.services.gaps import resolve_gap
+    13	from captureos.services.packaging import build_package, validate_citations
+    14	from captureos.services.recommendation import build_recommendation
+    15	from captureos.services.scan import (
+    16	    discover_opportunities,
+    17	    research_top_opportunities,
+    18	    score_opportunities,
+    19	)
+    20	from captureos.workflows.engine import StepContext, StepFn
+    21	
+    22	# Time-saved heuristic per workflow type, in minutes (FR-AU-3). Tunable.
+    23	TIME_SAVED: dict[str, int] = {
+    24	    WorkflowType.company_brain.value: 60,
+    25	    WorkflowType.document_ingest.value: 10,
+    26	    WorkflowType.opportunity_scan.value: 120,
+    27	    WorkflowType.requirement_extraction.value: 45,
+    28	    WorkflowType.evidence_match.value: 90,
+    29	    WorkflowType.recommendation.value: 30,
+    30	    WorkflowType.gap_resolution.value: 15,
+    31	    WorkflowType.package_build.value: 75,
+    32	}
+    33	
+    34	
+    35	def _company_brain_pipeline(run: WorkflowRun) -> list[tuple[str, StepFn]]:
+    36	    state: dict = {}
+    37	
+    38	    async def gather(ctx: StepContext) -> None:
+    39	        state.update(await gather_company_sources(ctx))
+    40	
+    41	    async def build(ctx: StepContext) -> None:
+    42	        await run_company_brain(ctx, state)
+    43	
+    44	    return [("gather_sources", gather), ("build_profile", build)]
+    45	
+    46	
+    47	def _document_ingest_pipeline(run: WorkflowRun) -> list[tuple[str, StepFn]]:
+    48	    return [("ingest", run_document_ingest)]
+    49	
+    50	
+    51	def _opportunity_scan_pipeline(run: WorkflowRun) -> list[tuple[str, StepFn]]:
+    52	    state: dict = {}
+    53	
+    54	    async def discover(ctx: StepContext) -> None:
+    55	        state.update(await discover_opportunities(ctx))
+    56	
+    57	    async def research(ctx: StepContext) -> None:
+    58	        await research_top_opportunities(ctx, state)
+    59	
+    60	    async def score(ctx: StepContext) -> None:
+    61	        await score_opportunities(ctx, state)
+    62	
+    63	    return [
+    64	        ("source_discovery", discover),
+    65	        ("opportunity_research", research),
+    66	        ("fit_scoring", score),
+    67	    ]
+    68	
+    69	
+    70	def _requirement_extraction_pipeline(run: WorkflowRun) -> list[tuple[str, StepFn]]:
+    71	    return [("extract_requirements", run_requirement_extraction)]
+    72	
+    73	
+    74	def _evidence_match_pipeline(run: WorkflowRun) -> list[tuple[str, StepFn]]:
+    75	    return [("evidence_acquisition", acquire_evidence), ("evidence_mapping", map_evidence)]
+    76	
+    77	
+    78	def _recommendation_pipeline(run: WorkflowRun) -> list[tuple[str, StepFn]]:
+    79	    return [("fit_recommendation", build_recommendation)]
+    80	
+    81	
+    82	def _gap_resolution_pipeline(run: WorkflowRun) -> list[tuple[str, StepFn]]:
+    83	    return [("resolve_gap", resolve_gap)]
+    84	
+    85	
+    86	def _package_build_pipeline(run: WorkflowRun) -> list[tuple[str, StepFn]]:
+    87	    return [("build_package", build_package), ("audit_citations", validate_citations)]
+    88	
+    89	
+    90	_PIPELINES = {
+    91	    WorkflowType.company_brain.value: _company_brain_pipeline,
+    92	    WorkflowType.document_ingest.value: _document_ingest_pipeline,
+    93	    WorkflowType.opportunity_scan.value: _opportunity_scan_pipeline,
+    94	    WorkflowType.requirement_extraction.value: _requirement_extraction_pipeline,
+    95	    WorkflowType.evidence_match.value: _evidence_match_pipeline,
+    96	    WorkflowType.recommendation.value: _recommendation_pipeline,
+    97	    WorkflowType.gap_resolution.value: _gap_resolution_pipeline,
+    98	    WorkflowType.package_build.value: _package_build_pipeline,
+    99	}
+   100	
+   101	
+   102	def build_steps(run: WorkflowRun) -> list[tuple[str, StepFn]]:
+   103	    builder = _PIPELINES.get(run.type)
+   104	    if builder is None:
+   105	        raise ValueError(f"No pipeline registered for workflow type {run.type!r}")
+   106	    return builder(run)
+
+exec
+/bin/zsh -lc "nl -ba apps/api/captureos/core/deps.py | sed -n '1,180p'" in /Users/anishguntreddi/Documents/hackathon
+ succeeded in 0ms:
+     1	"""Request dependencies: authentication, org resolution, and role enforcement (CON-5, NFR-1)."""
+     2	
+     3	from __future__ import annotations
+     4	
+     5	import uuid
+     6	from collections.abc import Awaitable, Callable
+     7	from dataclasses import dataclass
+     8	from typing import Annotated
+     9	
+    10	from fastapi import Depends, Path
+    11	from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+    12	from sqlalchemy import select
+    13	from sqlalchemy.ext.asyncio import AsyncSession
+    14	
+    15	from captureos.auth import get_auth_provider
+    16	from captureos.core.errors import AuthError, ForbiddenError, NotFoundError
+    17	from captureos.db.session import get_session
+    18	from captureos.models.enums import OrgRole
+    19	from captureos.models.org import Organization, OrgMember, User
+    20	
+    21	bearer_scheme = HTTPBearer(auto_error=False)
+    22	
+    23	SessionDep = Annotated[AsyncSession, Depends(get_session)]
+    24	BearerDep = Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)]
+    25	
+    26	_ROLE_ORDER = {OrgRole.viewer: 0, OrgRole.editor: 1, OrgRole.owner: 2}
+    27	
+    28	
+    29	async def get_current_user(session: SessionDep, creds: BearerDep = None) -> User:
+    30	    if creds is None or not creds.credentials:
+    31	        raise AuthError("Missing or malformed Authorization header")
+    32	    principal = await get_auth_provider().verify_token(creds.credentials)
+    33	
+    34	    if principal.is_local:
+    35	        try:
+    36	            user_id = uuid.UUID(principal.subject)
+    37	        except ValueError as exc:
+    38	            raise AuthError("Invalid token subject") from exc
+    39	        user = await session.get(User, user_id)
+    40	    else:
+    41	        result = await session.execute(
+    42	            select(User).where(User.external_auth_id == principal.subject)
+    43	        )
+    44	        user = result.scalar_one_or_none()
+    45	        if user is None and principal.email:
+    46	            user = User(email=principal.email, external_auth_id=principal.subject)
+    47	            session.add(user)
+    48	            await session.flush()
+    49	
+    50	    if user is None or not user.is_active:
+    51	        raise AuthError("User not found or inactive")
+    52	    return user
+    53	
+    54	
+    55	CurrentUser = Annotated[User, Depends(get_current_user)]
+    56	
+    57	
+    58	@dataclass(slots=True)
+    59	class OrgContext:
+    60	    user: User
+    61	    organization: Organization
+    62	    membership: OrgMember
+    63	
+    64	    @property
+    65	    def role(self) -> str:
+    66	        return self.membership.role
+    67	
+    68	    @property
+    69	    def org_id(self) -> uuid.UUID:
+    70	        return self.organization.id
+    71	
+    72	
+    73	async def _load_org_context(org_id: uuid.UUID, user: User, session: AsyncSession) -> OrgContext:
+    74	    org = await session.get(Organization, org_id)
+    75	    # Non-existent OR not-a-member both return 404 to avoid leaking org existence (CON-5).
+    76	    if org is None:
+    77	        raise NotFoundError("Organization not found")
+    78	    result = await session.execute(
+    79	        select(OrgMember).where(OrgMember.org_id == org_id, OrgMember.user_id == user.id)
+    80	    )
+    81	    membership = result.scalar_one_or_none()
+    82	    if membership is None:
+    83	        raise NotFoundError("Organization not found")
+    84	    return OrgContext(user=user, organization=org, membership=membership)
+    85	
+    86	
+    87	def require_org(
+    88	    min_role: OrgRole = OrgRole.viewer,
+    89	) -> Callable[..., Awaitable[OrgContext]]:
+    90	    """Dependency factory: resolves the org from the path, asserts membership and a
+    91	    minimum role, and returns the OrgContext. Use on every org-scoped route."""
+    92	
+    93	    async def dependency(
+    94	        user: CurrentUser,
+    95	        session: SessionDep,
+    96	        org_id: Annotated[uuid.UUID, Path()],
+    97	    ) -> OrgContext:
+    98	        ctx = await _load_org_context(org_id, user, session)
+    99	        if _ROLE_ORDER[OrgRole(ctx.membership.role)] < _ROLE_ORDER[min_role]:
+   100	            raise ForbiddenError(f"This action requires '{min_role.value}' role")
+   101	        return ctx
+   102	
+   103	    return dependency
+   104	
+   105	
+   106	# Common pre-bound dependencies.
+   107	OrgViewer = Annotated[OrgContext, Depends(require_org(OrgRole.viewer))]
+   108	OrgEditor = Annotated[OrgContext, Depends(require_org(OrgRole.editor))]
+   109	OrgOwner = Annotated[OrgContext, Depends(require_org(OrgRole.owner))]
+
+codex
+I’ve got two likely classes of issues already: approval/state transitions look under-constrained, and export hardening depends on how headers and renderers handle hostile strings. I’m validating those with the framework/library behavior now so the report stays concrete rather than speculative.
+codex
+The sandbox blocks heredocs, so I’m switching to single-command probes. I only need to confirm a couple of library behaviors: header encoding and whether the PDF/DOCX renderers choke on very large or non-Latin input.
+exec
+/bin/zsh -lc "python -c \"from starlette.responses import Response
+try:
+ r=Response(content=b'x', headers={'content-disposition':'attachment; filename=\\\"测试.pdf\\\"'})
+ print('ok', r.raw_headers)
+except Exception as e:
+ print(type(e).__name__, e)
+\"" in /Users/anishguntreddi/Documents/hackathon
+exec
+/bin/zsh -lc "python -c \"tests=['Alpha_123','Résumé','测试','مرحبا','A\\r\\nB']
+for s in tests:
+ safe=''.join(c if c.isalnum() else '_' for c in s)[:48] or 'filing_package'
+ print(repr(s), '->', repr(safe))
+\"" in /Users/anishguntreddi/Documents/hackathon
+exec
+/bin/zsh -lc "python -c \"from captureos.services.export import render_export
+docs=[('narrative','hello')]
+for title in ['Resume','Résumé','测试','مرحبا']:
+ try:
+  payload, media_type, filename = render_export('md', title, docs)
+  print(repr(title), '->', repr(filename))
+ except Exception as e:
+  print('render', repr(title), type(e).__name__, e)
+\"" in /Users/anishguntreddi/Documents/hackathon/apps/api
+exec
+/bin/zsh -lc "python -c \"from captureos.services.export import render_export
+docs=[('narrative','x'*1000000)]
+for fmt in ['pdf','docx']:
+ try:
+  payload, mt, fn = render_export(fmt, 'Test', docs)
+  print(fmt, len(payload), fn)
+ except Exception as e:
+  print(fmt, type(e).__name__, e)
+\"" in /Users/anishguntreddi/Documents/hackathon/apps/api
+ exited 127 in 334ms:
+pyenv: python: command not found
+
+The `python' command exists in these Python versions:
+  3.10.13
+  3.10.14
+  3.11.8
+  3.11.13
+  3.12.9
+
+Note: See 'pyenv help global' for tips on allowing both
+      python2 and python3 to be found.
+
+ exited 127 in 309ms:
+pyenv: python: command not found
+
+The `python' command exists in these Python versions:
+  3.10.13
+  3.10.14
+  3.11.8
+  3.11.13
+  3.12.9
+
+Note: See 'pyenv help global' for tips on allowing both
+      python2 and python3 to be found.
+
+ exited 127 in 457ms:
+pyenv: version `3.13' is not installed (set by /Users/anishguntreddi/Documents/hackathon/apps/api/.python-version)
+pyenv: python: command not found
+
+The `python' command exists in these Python versions:
+  3.10.13
+  3.10.14
+  3.11.8
+  3.11.13
+  3.12.9
+
+Note: See 'pyenv help global' for tips on allowing both
+      python2 and python3 to be found.
+
+ exited 127 in 451ms:
+pyenv: version `3.13' is not installed (set by /Users/anishguntreddi/Documents/hackathon/apps/api/.python-version)
+pyenv: python: command not found
+
+The `python' command exists in these Python versions:
+  3.10.13
+  3.10.14
+  3.11.8
+  3.11.13
+  3.12.9
+
+Note: See 'pyenv help global' for tips on allowing both
+      python2 and python3 to be found.
+
+exec
+/bin/zsh -lc 'which python3 && python3 --version' in /Users/anishguntreddi/Documents/hackathon
+ succeeded in 0ms:
+/opt/homebrew/bin/python3
+Python 3.14.3
+
+exec
+/bin/zsh -lc "python3 -c \"from starlette.responses import Response
+try:
+ r=Response(content=b'x', headers={'content-disposition':'attachment; filename=\\\"测试.pdf\\\"'})
+ print('ok', r.raw_headers)
+except Exception as e:
+ print(type(e).__name__, e)
+\"" in /Users/anishguntreddi/Documents/hackathon
+ succeeded in 0ms:
+UnicodeEncodeError 'latin-1' codec can't encode characters in position 22-23: ordinal not in range(256)
+
+exec
+/bin/zsh -lc "python3 -c \"tests=['Alpha_123','Résumé','测试','مرحبا','A\\r\\nB']
+for s in tests:
+ safe=''.join(c if c.isalnum() else '_' for c in s)[:48] or 'filing_package'
+ print(repr(s), '->', repr(safe))
+\"" in /Users/anishguntreddi/Documents/hackathon
+ succeeded in 0ms:
+'Alpha_123' -> 'Alpha_123'
+'Résumé' -> 'Résumé'
+'测试' -> '测试'
+'مرحبا' -> 'مرحبا'
+'A\r\nB' -> 'A__B'
+
+exec
+/bin/zsh -lc "PYTHONPATH=/Users/anishguntreddi/Documents/hackathon/apps/api python3 -c \"from captureos.services.export import render_export
+docs=[('narrative','hello')]
+for title in ['Resume','Résumé','测试','مرحبا']:
+ payload, media_type, filename = render_export('md', title, docs)
+ print(repr(title), '->', repr(filename))
+\"" in /Users/anishguntreddi/Documents/hackathon
+ exited 1 in 0ms:
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+    from captureos.services.export import render_export
+  File "/Users/anishguntreddi/Documents/hackathon/apps/api/captureos/services/export.py", line 10, in <module>
+    from docx import Document as DocxDocument
+ModuleNotFoundError: No module named 'docx'
+
+exec
+/bin/zsh -lc "PYTHONPATH=/Users/anishguntreddi/Documents/hackathon/apps/api python3 -c \"from captureos.services.export import render_export
+docs=[('narrative','x'*1000000)]
+for fmt in ['pdf','docx']:
+ try:
+  payload, mt, fn = render_export(fmt, 'Test', docs)
+  print(fmt, len(payload), fn)
+ except Exception as e:
+  print(fmt, type(e).__name__, e)
+\"" in /Users/anishguntreddi/Documents/hackathon
+exec
+/bin/zsh -lc "PYTHONPATH=/Users/anishguntreddi/Documents/hackathon/apps/api python3 -c \"from captureos.services.export import render_export
+for fmt in ['pdf','docx']:
+ try:
+  payload, mt, fn = render_export(fmt, 'Title', [('narrative','测试'*1000)])
+  print(fmt, len(payload), fn)
+ except Exception as e:
+  print(fmt, type(e).__name__, e)
+\"" in /Users/anishguntreddi/Documents/hackathon
+ exited 1 in 0ms:
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+    from captureos.services.export import render_export
+  File "/Users/anishguntreddi/Documents/hackathon/apps/api/captureos/services/export.py", line 10, in <module>
+    from docx import Document as DocxDocument
+ModuleNotFoundError: No module named 'docx'
+
+ exited 1 in 0ms:
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+    from captureos.services.export import render_export
+  File "/Users/anishguntreddi/Documents/hackathon/apps/api/captureos/services/export.py", line 10, in <module>
+    from docx import Document as DocxDocument
+ModuleNotFoundError: No module named 'docx'
+

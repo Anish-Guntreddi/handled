@@ -64,6 +64,33 @@ export async function uploadBlob(uploadUrl: string, data: Blob): Promise<void> {
   if (!res.ok) throw new ApiError(res.status, "upload_failed", "Upload failed");
 }
 
+// Download a binary artifact (package export). Triggers a browser save; never JSON-parses
+// a success. The artifact is local-only — the API never submits it anywhere (CON-1).
+export async function apiDownload(path: string, method = "POST"): Promise<void> {
+  const headers: Record<string, string> = {};
+  const token = tokenGetter();
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  const res = await fetch(`${API_BASE}/api/v1${path}`, { method, headers });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    const err = (data as { error?: { code?: string; message?: string } }).error ?? {
+      code: "error",
+      message: res.statusText,
+    };
+    throw new ApiError(res.status, err.code ?? "error", err.message ?? "Export failed");
+  }
+  const blob = await res.blob();
+  const match = (res.headers.get("content-disposition") ?? "").match(/filename="?([^"]+)"?/);
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = match?.[1] ?? "filing_package";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 const TERMINAL = new Set(["succeeded", "failed", "needs_input"]);
 
 // Poll a long-running workflow until it reaches a terminal state (PRD §9.4).

@@ -10,6 +10,7 @@ from captureos.services.documents import run_document_ingest
 from captureos.services.evidence import acquire_evidence, map_evidence
 from captureos.services.filings import run_requirement_extraction
 from captureos.services.gaps import resolve_gap
+from captureos.services.packaging import build_package, validate_citations
 from captureos.services.recommendation import build_recommendation
 from captureos.services.scan import (
     discover_opportunities,
@@ -27,6 +28,7 @@ TIME_SAVED: dict[str, int] = {
     WorkflowType.evidence_match.value: 90,
     WorkflowType.recommendation.value: 30,
     WorkflowType.gap_resolution.value: 15,
+    WorkflowType.package_build.value: 75,
 }
 
 
@@ -81,6 +83,10 @@ def _gap_resolution_pipeline(run: WorkflowRun) -> list[tuple[str, StepFn]]:
     return [("resolve_gap", resolve_gap)]
 
 
+def _package_build_pipeline(run: WorkflowRun) -> list[tuple[str, StepFn]]:
+    return [("build_package", build_package), ("audit_citations", validate_citations)]
+
+
 _PIPELINES = {
     WorkflowType.company_brain.value: _company_brain_pipeline,
     WorkflowType.document_ingest.value: _document_ingest_pipeline,
@@ -89,6 +95,7 @@ _PIPELINES = {
     WorkflowType.evidence_match.value: _evidence_match_pipeline,
     WorkflowType.recommendation.value: _recommendation_pipeline,
     WorkflowType.gap_resolution.value: _gap_resolution_pipeline,
+    WorkflowType.package_build.value: _package_build_pipeline,
 }
 
 
