@@ -9,11 +9,18 @@ from captureos.api import (
     auth,
     billing,
     company_profile,
+    copilot,
+    corpus,
+    discovery,
     documents,
     filings,
+    forms,
     health,
+    obligations,
+    onboarding,
     opportunities,
     orgs,
+    programs,
     workflows,
 )
 from captureos.config import BillingProviderName, get_settings
@@ -28,6 +35,13 @@ api_router.include_router(documents.blobs_router)
 api_router.include_router(workflows.router)
 api_router.include_router(opportunities.router)
 api_router.include_router(filings.router)
+api_router.include_router(obligations.router)
+api_router.include_router(onboarding.router)
+api_router.include_router(programs.router)
+api_router.include_router(discovery.router)
+api_router.include_router(copilot.router)
+api_router.include_router(forms.router)
+api_router.include_router(corpus.router)
 api_router.include_router(audit.router)
 api_router.include_router(billing.router)
 # The unauthenticated webhook is only mounted for a provider that signs its callbacks (Stripe).

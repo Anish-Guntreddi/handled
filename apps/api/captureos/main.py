@@ -76,7 +76,17 @@ def create_app() -> FastAPI:
 
     @app.get("/health", tags=["health"])
     async def root_health() -> dict:
-        return {"status": "ok", "version": __version__}
+        # Non-secret provider summary — confirms a deploy is wired to the intended providers.
+        return {
+            "status": "ok",
+            "version": __version__,
+            "providers": {
+                "llm_pro": (settings.llm_provider_pro or settings.llm_provider).value,
+                "llm_flash": (settings.llm_provider_flash or settings.llm_provider).value,
+                "embeddings": settings.embeddings_provider.value,
+                "docparse": settings.docparse_provider.value,
+            },
+        }
 
     return app
 

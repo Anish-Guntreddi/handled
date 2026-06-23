@@ -10,6 +10,7 @@ import anyio
 
 from captureos.config import get_settings
 from captureos.logging import configure_logging, get_logger
+from captureos.services.obligations import run_obligation_scan
 from captureos.workflows.queue import drain_workflow_jobs, requeue_stale_jobs
 
 
@@ -22,6 +23,9 @@ async def run() -> None:
         try:
             await requeue_stale_jobs()
             processed = await drain_workflow_jobs()
+            # Renewals engine: notify on obligations entering their reminder window. Idempotent
+            # (per-obligation cooldown), so running it every loop is safe.
+            await run_obligation_scan()
         except Exception as exc:  # noqa: BLE001 - never let the loop die
             logger.error("worker.loop_error", error=str(exc))
             processed = 0

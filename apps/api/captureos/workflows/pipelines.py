@@ -10,7 +10,9 @@ from captureos.services.documents import run_document_ingest
 from captureos.services.evidence import acquire_evidence, map_evidence
 from captureos.services.filings import run_requirement_extraction
 from captureos.services.gaps import resolve_gap
+from captureos.services.obligations import sync_obligations
 from captureos.services.packaging import build_package, validate_citations
+from captureos.services.programs import run_program_scan
 from captureos.services.recommendation import build_recommendation
 from captureos.services.scan import (
     discover_opportunities,
@@ -29,6 +31,8 @@ TIME_SAVED: dict[str, int] = {
     WorkflowType.recommendation.value: 30,
     WorkflowType.gap_resolution.value: 15,
     WorkflowType.package_build.value: 75,
+    WorkflowType.obligation_sync.value: 20,
+    WorkflowType.program_scan.value: 40,
 }
 
 
@@ -87,6 +91,14 @@ def _package_build_pipeline(run: WorkflowRun) -> list[tuple[str, StepFn]]:
     return [("build_package", build_package), ("audit_citations", validate_citations)]
 
 
+def _obligation_sync_pipeline(run: WorkflowRun) -> list[tuple[str, StepFn]]:
+    return [("derive_obligations", sync_obligations)]
+
+
+def _program_scan_pipeline(run: WorkflowRun) -> list[tuple[str, StepFn]]:
+    return [("find_programs", run_program_scan)]
+
+
 _PIPELINES = {
     WorkflowType.company_brain.value: _company_brain_pipeline,
     WorkflowType.document_ingest.value: _document_ingest_pipeline,
@@ -96,6 +108,8 @@ _PIPELINES = {
     WorkflowType.recommendation.value: _recommendation_pipeline,
     WorkflowType.gap_resolution.value: _gap_resolution_pipeline,
     WorkflowType.package_build.value: _package_build_pipeline,
+    WorkflowType.obligation_sync.value: _obligation_sync_pipeline,
+    WorkflowType.program_scan.value: _program_scan_pipeline,
 }
 
 

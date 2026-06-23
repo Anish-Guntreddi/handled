@@ -18,6 +18,9 @@ dependencies = [
     "pyjwt>=2.10",
     "argon2-cffi>=23.1",
     "httpx>=0.28",
+    "anthropic>=0.69",
+    "google-genai>=0.3",
+    "defusedxml>=0.7",
     "structlog>=24.4",
     "python-multipart>=0.0.12",
     "tenacity>=9.0",
@@ -27,9 +30,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Cloud providers — installed only when deploying to GCP. The app runs without these.
+# GCP infra SDKs — installed only when deploying to GCP (storage/pubsub/docai/bigquery/auth).
+# Note: google-genai (the Gemini LLM + embeddings API client) is a BASE dependency, since
+# Gemini embeddings are the default production embeddings provider.
 gcp = [
-    "google-genai>=0.3",
     "google-cloud-storage>=2.18",
     "google-cloud-pubsub>=2.27",
     "google-cloud-documentai>=3.1",
@@ -66,6 +70,8 @@ ignore = ["B008"]  # FastAPI Depends() in defaults is idiomatic.
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["S101", "S105", "S106", "S107"]
 "captureos/scripts/*" = ["S101"]
+# Curated data catalog: long human-readable program descriptions are data, not code.
+"captureos/programs/catalog.py" = ["E501"]
 
 [tool.mypy]
 python_version = "3.12"

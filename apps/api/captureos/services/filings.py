@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from captureos.agents.requirements import RequirementExtractionAgent, RequirementExtractionInput
 from captureos.core.errors import NotFoundError
+from captureos.ingestion.corpus_retrieval import corpus_retrieve
 from captureos.models.enums import FilingStatus
 from captureos.models.filings import Filing, FilingRequirement
 from captureos.models.opportunities import Opportunity
@@ -66,9 +67,16 @@ async def run_requirement_extraction(ctx: StepContext) -> None:
         filing.status = FilingStatus.evidence_review.value
         raise NeedsInput("No solicitation text available; paste or upload the solicitation first.")
 
+    # Ground extraction in the shared government corpus (real FAR/CFR text). Empty until the
+    # corpus is seeded + embedded, in which case extraction behaves exactly as before.
+    grounding = await corpus_retrieve(session, text[:2000], k=4, doc_type="regulation")
+    regulatory_context = [chunk.text for chunk, _ in grounding]
+
     output = await RequirementExtractionAgent().run(
         ctx.agent_context(),
-        RequirementExtractionInput(solicitation_text=text, kind=filing.kind),
+        RequirementExtractionInput(
+            solicitation_text=text, kind=filing.kind, regulatory_context=regulatory_context
+        ),
     )
 
     existing = (

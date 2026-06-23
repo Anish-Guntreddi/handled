@@ -9,8 +9,11 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
+from captureos.logging import get_logger
 from captureos.models.enums import ActorType
 from captureos.providers import get_audit_sink
+
+logger = get_logger(__name__)
 
 
 async def record_event(
@@ -46,4 +49,10 @@ async def record_event(
         "status": status,
         "payload": payload or {},
     }
-    await get_audit_sink().emit(event)
+    # Best-effort: an audit-sink failure (e.g. a transient BigQuery error) must never roll
+    # back the caller's transaction — that would leave workflow/job state diverged (ORCH-002).
+    # Log loudly so the dropped event is observable/alertable and can be backfilled.
+    try:
+        await get_audit_sink().emit(event)
+    except Exception as exc:  # noqa: BLE001 - audit is secondary to the state transition
+        logger.error("audit.emit_failed", action=action, error=str(exc))

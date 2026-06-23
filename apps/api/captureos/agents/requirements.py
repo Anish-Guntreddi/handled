@@ -57,6 +57,8 @@ _CATEGORY_RULES: list[tuple[tuple[str, ...], str]] = [
 class RequirementExtractionInput(BaseModel):
     solicitation_text: str
     kind: str = "gov_contract"
+    # Authoritative regulation text retrieved from the shared corpus, to ground + cite (KB).
+    regulatory_context: list[str] = Field(default_factory=list)
 
 
 class ExtractedRequirement(BaseModel):
@@ -91,8 +93,15 @@ class RequirementExtractionAgent(Agent[RequirementExtractionInput, RequirementEx
     )
 
     def build_prompt(self, data: RequirementExtractionInput) -> str:
+        grounding = ""
+        if data.regulatory_context:
+            joined = "\n".join(f"- {c[:500]}" for c in data.regulatory_context[:5])
+            grounding = (
+                "\nAuthoritative regulation text (ground requirements in this and cite it where "
+                f"it applies):\n{joined}\n"
+            )
         return (
-            f"Document kind: {data.kind}\n\n"
+            f"Document kind: {data.kind}\n{grounding}\n"
             f"Solicitation text:\n{data.solicitation_text[:12000]}\n\n"
             "Extract every must-satisfy requirement as {text, category, mandatory, locator, "
             "confidence}. Deduplicate near-identical items."
