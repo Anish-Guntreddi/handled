@@ -54,7 +54,7 @@ class GeminiEmbeddings(EmbeddingsProvider):
         try:
             from google import genai  # type: ignore
         except ImportError as exc:  # pragma: no cover
-            raise RuntimeError("google-genai not installed (uv sync --extra gcp)") from exc
+            raise RuntimeError("google-genai not installed. Run: uv sync") from exc
         self._client = genai.Client(api_key=settings.gemini_api_key)
 
     async def embed(self, texts: list[str]) -> EmbeddingResult:  # pragma: no cover - live creds
@@ -64,9 +64,11 @@ class GeminiEmbeddings(EmbeddingsProvider):
         resp = await anyio.to_thread.run_sync(
             lambda: self._client.models.embed_content(
                 model=self._model,
-                contents=texts,
+                # list[str] is valid at runtime; the SDK's union is invariant so mypy rejects it.
+                contents=texts,  # type: ignore[arg-type]
                 config=types.EmbedContentConfig(output_dimensionality=self.dim),
             )
         )
-        vectors = [list(e.values) for e in resp.embeddings]
+        # Defensive None-handling: the SDK types embeddings/values as optional.
+        vectors = [list(e.values or []) for e in (resp.embeddings or [])]
         return EmbeddingResult(vectors=vectors, model=self._model, dim=self.dim)

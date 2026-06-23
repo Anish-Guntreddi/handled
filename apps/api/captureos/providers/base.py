@@ -155,3 +155,12 @@ class BillingProvider(Protocol):
     # Returns a normalized event dict {type, org_id, product, amount_cents, external_id}
     # when the payload is authentic, else None (CON-4: signature verified server-side).
     def verify_and_parse_webhook(self, payload: bytes, signature: str | None) -> dict | None: ...
+
+
+@runtime_checkable
+class NotificationProvider(Protocol):
+    """Delivers a reminder to a recipient. Mock logs/records; smtp sends real email."""
+
+    name: str
+
+    async def send(self, *, to: str, subject: str, body: str) -> None: ...

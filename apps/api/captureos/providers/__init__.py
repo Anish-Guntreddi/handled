@@ -14,6 +14,7 @@ from captureos.config import (
     DocparseProviderName,
     EmbeddingsProviderName,
     LLMProviderName,
+    NotificationsProviderName,
     QueueProviderName,
     SecretsBackendName,
     Settings,
@@ -28,6 +29,7 @@ from captureos.providers.base import (
     EmbeddingsProvider,
     LLMProvider,
     ModelTier,
+    NotificationProvider,
     QueueProvider,
     SecretsProvider,
     StorageProvider,
@@ -35,7 +37,8 @@ from captureos.providers.base import (
 from captureos.providers.billing import MockBilling, StripeBilling
 from captureos.providers.docparse import DocAIDocparse, LocalDocparse
 from captureos.providers.embeddings import GeminiEmbeddings, MockEmbeddings
-from captureos.providers.llm import GeminiLLM, MockLLM
+from captureos.providers.llm import AnthropicLLM, GeminiLLM, MockLLM
+from captureos.providers.notifications import MockNotifier, SmtpNotifier
 from captureos.providers.queue import LocalQueue, PubSubQueue
 from captureos.providers.secrets import EnvSecrets, GCPSecretManager
 from captureos.providers.storage import GCSStorage, LocalStorage
@@ -50,6 +53,7 @@ __all__ = [
     "SecretsProvider",
     "AuditSink",
     "BillingProvider",
+    "NotificationProvider",
     "get_llm",
     "get_embeddings",
     "get_storage",
@@ -58,16 +62,31 @@ __all__ = [
     "get_secrets",
     "get_audit_sink",
     "get_billing",
+    "get_notifier",
     "reset_providers",
 ]
 
 
-@lru_cache
-def get_llm(settings: Settings | None = None) -> LLMProvider:
-    s = settings or get_settings()
-    if s.llm_provider is LLMProviderName.gemini:
+def _build_llm(provider: LLMProviderName, s: Settings) -> LLMProvider:
+    if provider is LLMProviderName.gemini:
         return GeminiLLM(s)
+    if provider is LLMProviderName.anthropic:
+        return AnthropicLLM(s)
     return MockLLM(s)
+
+
+@lru_cache
+def get_llm(tier: ModelTier | None = None, settings: Settings | None = None) -> LLMProvider:
+    """Resolve the LLM provider for a tier. A per-tier override (LLM_PROVIDER_FLASH /
+    LLM_PROVIDER_PRO) lets the cheap extraction lane and the reasoning lane use different
+    providers; absent an override, both fall back to LLM_PROVIDER. Plug-and-play per lane."""
+    s = settings or get_settings()
+    provider = s.llm_provider
+    if tier is ModelTier.pro and s.llm_provider_pro is not None:
+        provider = s.llm_provider_pro
+    elif tier is ModelTier.flash and s.llm_provider_flash is not None:
+        provider = s.llm_provider_flash
+    return _build_llm(provider, s)
 
 
 @lru_cache
@@ -126,6 +145,14 @@ def get_billing(settings: Settings | None = None) -> BillingProvider:
     return MockBilling(s)
 
 
+@lru_cache
+def get_notifier(settings: Settings | None = None) -> NotificationProvider:
+    s = settings or get_settings()
+    if s.notifications_provider is NotificationsProviderName.smtp:
+        return SmtpNotifier(s)
+    return MockNotifier(s)
+
+
 def reset_providers() -> None:
     """Clear cached providers (used by tests that swap config)."""
     for fn in (
@@ -137,5 +164,6 @@ def reset_providers() -> None:
         get_secrets,
         get_audit_sink,
         get_billing,
+        get_notifier,
     ):
         fn.cache_clear()

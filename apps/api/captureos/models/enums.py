@@ -60,6 +60,7 @@ class EvidenceOrigin(StrEnum):
 class OpportunityKind(StrEnum):
     gov_contract = "gov_contract"
     grant = "grant"
+    program = "program"  # Money-Finder: SBA loans, SBIR/STTR, tax credits, set-aside advantages
     # Future verticals (schema-ready, not implemented in MVP):
     permit = "permit"
     license = "license"
@@ -140,6 +141,60 @@ class WorkflowType(StrEnum):
     gap_resolution = "gap_resolution"
     recommendation = "recommendation"
     package_build = "package_build"
+    obligation_sync = "obligation_sync"
+    program_scan = "program_scan"
+
+
+class CorpusAuthority(StrEnum):
+    """Where a shared-corpus document came from (all public-domain US gov sources)."""
+
+    ecfr = "ecfr"
+    federal_register = "federal_register"
+    govinfo = "govinfo"
+    grants_gov = "grants_gov"
+    irs = "irs"
+    sba = "sba"
+    gsa = "gsa"
+    sam = "sam"
+    firecrawl = "firecrawl"
+    manual = "manual"
+
+
+class CorpusDocType(StrEnum):
+    regulation = "regulation"
+    form = "form"
+    program = "program"
+    nofo = "nofo"
+    guidance = "guidance"
+    publication = "publication"  # IRS pubs, SBA policy directives, NIST SPs (PDF sources)
+
+
+class ObligationKind(StrEnum):
+    """Recurring compliance obligations that keep a govcon/grants entity eligible (retention)."""
+
+    sam_registration = "sam_registration"  # SAM.gov entity registration — annual
+    reps_and_certs = "reps_and_certs"  # annual representations & certifications
+    certification_renewal = "certification_renewal"  # 8(a)/WOSB/HUBZone/SDVOSB recert
+    grant_report = "grant_report"  # post-award progress/financial reporting
+    contract_deliverable = "contract_deliverable"  # CDRL / CPARS / periodic deliverable
+    filing_deadline = "filing_deadline"  # a specific opportunity's submission deadline
+    custom = "custom"
+
+
+class RecurrenceCadence(StrEnum):
+    none = "none"
+    monthly = "monthly"
+    quarterly = "quarterly"
+    semiannual = "semiannual"
+    annual = "annual"
+
+
+class ObligationStatus(StrEnum):
+    upcoming = "upcoming"  # due_date is beyond the reminder window
+    due_soon = "due_soon"  # within the reminder lead window
+    overdue = "overdue"  # past due_date, not completed
+    completed = "completed"
+    dismissed = "dismissed"
 
 
 class WorkflowStatus(StrEnum):

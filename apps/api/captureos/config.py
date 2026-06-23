@@ -34,6 +34,7 @@ class AuthProviderName(StrEnum):
 class LLMProviderName(StrEnum):
     mock = "mock"
     gemini = "gemini"
+    anthropic = "anthropic"
 
 
 class EmbeddingsProviderName(StrEnum):
@@ -71,6 +72,11 @@ class BillingProviderName(StrEnum):
     stripe = "stripe"
 
 
+class NotificationsProviderName(StrEnum):
+    mock = "mock"  # logs + records an audit event; no external send
+    smtp = "smtp"  # real email via stdlib smtplib (no extra dependency)
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=(str(_ROOT_ENV), ".env"),
@@ -106,12 +112,29 @@ class Settings(BaseSettings):
     gemini_api_key: str | None = None
     gemini_model_pro: str = "gemini-2.5-pro"
     gemini_model_flash: str = "gemini-2.5-flash"
+    # Anthropic Claude: pro = strong reasoning (bid/no-bid, narrative); flash = cheap extraction.
+    anthropic_api_key: str | None = None
+    anthropic_model_pro: str = "claude-opus-4-8"
+    anthropic_model_flash: str = "claude-haiku-4-5"
+    # Optional per-tier provider override (defaults to llm_provider). Lets the cheap "flash" lane
+    # (doc extraction) and the "pro" lane (reasoning) run on DIFFERENT providers — e.g. Gemini
+    # Flash for extraction + Claude for reasoning — with no agent-code change.
+    llm_provider_flash: LLMProviderName | None = None
+    llm_provider_pro: LLMProviderName | None = None
     llm_timeout_seconds: int = 60
     llm_max_retries: int = 2
 
+    @property
+    def active_llm_providers(self) -> set[LLMProviderName]:
+        """Every LLM provider that can be selected (default + any per-tier override)."""
+        candidates = (self.llm_provider, self.llm_provider_pro, self.llm_provider_flash)
+        return {p for p in candidates if p is not None}
+
     # ---- Embeddings ----
     embeddings_provider: EmbeddingsProviderName = EmbeddingsProviderName.mock
-    embedding_model: str = "text-embedding-004"
+    # gemini-embedding-001 is the current GA model (text-embedding-004 is retiring); it supports
+    # Matryoshka output dims, so 768 keeps the existing pgvector schema with no migration.
+    embedding_model: str = "gemini-embedding-001"
     embedding_dim: int = 768
 
     # ---- Storage ----
@@ -153,6 +176,57 @@ class Settings(BaseSettings):
     source_fetch_cache_ttl_seconds: int = 86400
     source_fetch_rate_limit_per_min: int = 30
 
+    # ---- Notifications / renewals engine ----
+    notifications_provider: NotificationsProviderName = NotificationsProviderName.mock
+    # How many days before a due_date an obligation enters the reminder window.
+    reminder_lead_days: int = 30
+    # Don't re-send a reminder for the same obligation more often than this.
+    reminder_cooldown_days: int = 7
+    notification_from_email: str | None = None
+    smtp_host: str | None = None
+    smtp_port: int = 587
+    smtp_user: str | None = None
+    smtp_password: str | None = None
+    smtp_use_tls: bool = True
+
+    # ---- Government corpus (KB) ----
+    # Free .gov APIs feed most of the corpus; Firecrawl handles the HTML/scrape-only long tail.
+    # eCFR "title:part" targets — the small-business wedge: WIN WORK (FAR 19 set-asides + the
+    # first-bid contracting core), GET MONEY (grants Uniform Guidance + SBA loan/disaster programs),
+    # STAY COMPLIANT (SAM registration, FAR 52 clauses, grants reporting/debarment).
+    # Heavier DoD/labor/EEO depth (DFARS, 29/41 CFR) is the Tier-2 backlog (see the gap-audit doc).
+    corpus_ecfr_targets: str = (
+        "48:19,13:121,13:124,13:125,13:126,13:127,2:200,"  # set-asides + grants Uniform Guidance
+        "13:120,13:123,"  # GET MONEY: SBA 7(a)/504 business loans + disaster loans
+        "48:2,48:4,48:9,48:12,48:13,48:15,48:52,"  # first-bid FAR core + clauses
+        "2:25,2:170,2:180"  # grants compliance: SAM/UEI, FFATA reporting, suspension & debarment
+    )
+    corpus_firecrawl_form_urls: str = ""  # comma list of form/guidance URLs to scrape
+    firecrawl_api_key: str | None = None
+    corpus_retrieval_k: int = 5
+    # PDF publications: the IRS small-business get-money pubs are built-in defaults; add more PDF
+    # URLs here (e.g. the current SBA SBIR/STTR Policy Directive PDF, NIST SP 800-171).
+    corpus_pdf_extra_urls: str = ""
+
+    @property
+    def corpus_pdf_extra_url_list(self) -> list[str]:
+        return [u.strip() for u in self.corpus_pdf_extra_urls.split(",") if u.strip()]
+
+    @property
+    def corpus_ecfr_target_list(self) -> list[tuple[str, str]]:
+        out: list[tuple[str, str]] = []
+        for spec in self.corpus_ecfr_targets.split(","):
+            spec = spec.strip()
+            if not spec:
+                continue
+            title, _, part = spec.partition(":")
+            out.append((title.strip(), part.strip()))
+        return out
+
+    @property
+    def corpus_firecrawl_url_list(self) -> list[str]:
+        return [u.strip() for u in self.corpus_firecrawl_form_urls.split(",") if u.strip()]
+
     # ---- Cost guard ----
     workflow_token_budget: int = 200_000
 
@@ -168,6 +242,12 @@ class Settings(BaseSettings):
     @classmethod
     def _strip_origins(cls, v: str) -> str:
         return v.strip()
+
+    @field_validator("llm_provider_pro", "llm_provider_flash", mode="before")
+    @classmethod
+    def _blank_provider_to_none(cls, v: object) -> object:
+        # A blank env value (LLM_PROVIDER_PRO=) means "no override" → fall back to llm_provider.
+        return None if v == "" else v
 
     @property
     def cors_origins_list(self) -> list[str]:
@@ -187,8 +267,39 @@ class Settings(BaseSettings):
                 )
             if self.auth_provider is AuthProviderName.firebase and not self.firebase_project_id:
                 raise ValueError("FIREBASE_PROJECT_ID required when AUTH_PROVIDER=firebase")
-            if self.llm_provider is LLMProviderName.gemini and not self.gemini_api_key:
-                raise ValueError("GEMINI_API_KEY required when LLM_PROVIDER=gemini")
+            # Validate every active LLM provider (default + per-tier overrides) has its key.
+            active_llm = self.active_llm_providers
+            if LLMProviderName.gemini in active_llm and not self.gemini_api_key:
+                raise ValueError("GEMINI_API_KEY required when a gemini LLM tier is active")
+            if LLMProviderName.anthropic in active_llm and not self.anthropic_api_key:
+                raise ValueError("ANTHROPIC_API_KEY required when an anthropic LLM tier is active")
+            # ORCH-005: fail fast at startup for every non-local provider that needs config,
+            # rather than surfacing a 500 on first use mid-workflow.
+            if (
+                self.embeddings_provider is EmbeddingsProviderName.gemini
+                and not self.gemini_api_key
+            ):
+                raise ValueError("GEMINI_API_KEY required when EMBEDDINGS_PROVIDER=gemini")
+            if self.storage_provider is StorageProviderName.gcs and not self.gcs_bucket:
+                raise ValueError("GCS_BUCKET required when STORAGE_PROVIDER=gcs")
+            if self.queue_provider is QueueProviderName.pubsub and not self.pubsub_project_id:
+                raise ValueError("PUBSUB_PROJECT_ID required when QUEUE_PROVIDER=pubsub")
+            if self.docparse_provider is DocparseProviderName.docai and not self.docai_processor_id:
+                raise ValueError("DOCAI_PROCESSOR_ID required when DOCPARSE_PROVIDER=docai")
+            if (
+                self.secrets_backend is SecretsBackendName.gcp_secret_manager
+                and not self.gcp_project_id
+            ):
+                raise ValueError("GCP_PROJECT_ID required when SECRETS_BACKEND=gcp_secret_manager")
+            if self.audit_sink is AuditSinkName.bigquery and not self.gcp_project_id:
+                raise ValueError("GCP_PROJECT_ID required when AUDIT_SINK=bigquery")
+            if self.notifications_provider is NotificationsProviderName.smtp and not (
+                self.smtp_host and self.notification_from_email
+            ):
+                raise ValueError(
+                    "SMTP_HOST and NOTIFICATION_FROM_EMAIL are required "
+                    "when NOTIFICATIONS_PROVIDER=smtp"
+                )
             # Fail closed: mock billing has no payment verification, so it must never run in a
             # deployed env, and a real Stripe webhook must be signature-verifiable (CON-4).
             if self.billing_provider is BillingProviderName.mock:

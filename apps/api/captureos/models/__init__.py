@@ -5,6 +5,7 @@ from captureos.db.base import Base
 from captureos.models.audit import AuditEvent
 from captureos.models.billing import CustomerFeedback, RevenueRecord, Subscription
 from captureos.models.company import CompanyProfile
+from captureos.models.corpus import CorpusChunk, CorpusDocument
 from captureos.models.documents import Document, DocumentChunk
 from captureos.models.evidence import EvidenceItem, Source
 from captureos.models.filings import (
@@ -16,6 +17,7 @@ from captureos.models.filings import (
     Recommendation,
 )
 from captureos.models.jobs import WorkflowJob
+from captureos.models.obligations import Obligation
 from captureos.models.opportunities import Opportunity
 from captureos.models.org import Organization, OrgMember, User
 from captureos.models.workflow import AgentRun, WorkflowRun, WorkflowStep
@@ -27,6 +29,8 @@ __all__ = [
     "RevenueRecord",
     "Subscription",
     "CompanyProfile",
+    "CorpusChunk",
+    "CorpusDocument",
     "Document",
     "DocumentChunk",
     "EvidenceItem",
@@ -37,6 +41,7 @@ __all__ = [
     "FilingRequirement",
     "GeneratedDocument",
     "Recommendation",
+    "Obligation",
     "Opportunity",
     "OrgMember",
     "Organization",

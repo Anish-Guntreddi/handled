@@ -106,9 +106,7 @@ async def test_billing_cross_org_isolation(client: AsyncClient) -> None:
     _headers_a, org_a = await _setup(client, "bil-a@example.com")
     tokens_b = await register(client, "bil-b@example.com")
     headers_b = auth_headers(tokens_b)
-    assert (
-        await client.get(f"/api/v1/orgs/{org_a}/billing", headers=headers_b)
-    ).status_code == 404
+    assert (await client.get(f"/api/v1/orgs/{org_a}/billing", headers=headers_b)).status_code == 404
     assert (
         await client.post(
             f"/api/v1/orgs/{org_a}/billing/checkout", json={"product": "sprint"}, headers=headers_b
