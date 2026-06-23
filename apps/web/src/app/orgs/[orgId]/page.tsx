@@ -55,7 +55,19 @@ export default function OrgWorkspace() {
           <h1 className="mt-1 text-2xl font-semibold tracking-tight">Company Brain</h1>
           <p className="text-sm text-neutral-500">Build a source-backed profile, then ingest documents.</p>
         </div>
-        <nav className="flex shrink-0 gap-2">
+        <nav className="flex shrink-0 flex-wrap justify-end gap-2">
+          <Link
+            href={`/orgs/${orgId}/money-finder`}
+            className="rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-sm font-medium text-emerald-800 hover:bg-emerald-100"
+          >
+            Money Finder
+          </Link>
+          <Link
+            href={`/orgs/${orgId}/forms`}
+            className="rounded-lg border border-neutral-300 px-3 py-1.5 text-sm font-medium hover:bg-neutral-100"
+          >
+            Forms
+          </Link>
           <Link
             href={`/orgs/${orgId}/audit`}
             className="rounded-lg border border-neutral-300 px-3 py-1.5 text-sm font-medium hover:bg-neutral-100"

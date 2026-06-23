@@ -216,6 +216,119 @@ export type PackageView = {
   canExport: boolean;
 };
 
+// Find feed (discovery): the org-scoped "money on the table" payoff surface.
+export type DiscoveryItem = {
+  id: string;
+  kind: "program" | "gov_contract" | "grant";
+  typeLabel: string;
+  name: string;
+  funder: string | null;
+  eligibility: "qualify" | "likely";
+  eligibilityLabel: string;
+  isNew: boolean;
+  why: string | null;
+  citation: string | null;
+  benefit: string | null;
+  estValue: number;
+  cta: string;
+};
+
+export type Discovery = {
+  totalEstimate: number;
+  programsCount: number;
+  contractsCount: number;
+  matchCount: number;
+  qualifyCount: number;
+  likelyCount: number;
+  scanCount: number;
+  newCount: number;
+  items: DiscoveryItem[];
+};
+
+// Copilot: the cited Q&A surface over the Company Brain + live program scan.
+// POST /orgs/{orgId}/copilot/ask {question} → this shape.
+export type CopilotCitation = {
+  label: string;
+  locator: string;
+  snippet: string;
+};
+
+export type CopilotCard = {
+  name: string;
+  citation: string | null;
+  benefit: string | null;
+  eligibility: "qualify" | "likely";
+  eligibilityLabel: string;
+};
+
+export type CopilotAnswer = {
+  answer: string;
+  citations: CopilotCitation[];
+  cards: CopilotCard[];
+  note: string | null;
+};
+
+// Money-Finder: a funding/subsidy program the org may qualify for.
+export type ProgramMatch = {
+  id: string;
+  programId: string | null;
+  name: string;
+  funder: string | null;
+  programType: string | null;
+  fitScore: number | null;
+  decision: string | null; // apply | review | no_apply
+  reasonsFor: string[];
+  reasonsAgainst: string[];
+  keyFactors: string[];
+  benefit: string | null;
+  howToApply: string | null;
+  citation: string | null;
+};
+
+// Filled Forms: a submission form with fields auto-filled from the Company Brain.
+export type FilledField = {
+  fieldId: string;
+  label: string;
+  value: string | null;
+  status: string; // filled | missing
+  source: string; // auto | manual
+  note: string;
+};
+
+export type FilledForm = {
+  formId: string;
+  name: string;
+  description: string;
+  citation: string;
+  filledCount: number;
+  missingRequired: number;
+  fields: FilledField[];
+};
+
+// Stay eligible (renewals/obligations): GET /orgs/{orgId}/obligations →
+// list of recurring deadlines. PATCH /orgs/{orgId}/obligations/{id} mutates
+// status (mark done/undo) and notifyLeadDays (reminder lead window).
+// NOTE: the wire response intentionally omits notifyLeadDays, so the reminder
+// on/off state cannot be read back from the server (see page for handling).
+export type ObligationStatus =
+  | "upcoming"
+  | "due_soon"
+  | "overdue"
+  | "completed"
+  | "dismissed";
+
+export type Obligation = {
+  id: string;
+  kind: string;
+  title: string;
+  description: string | null;
+  dueDate: string; // ISO date (YYYY-MM-DD)
+  recurrence: string;
+  status: ObligationStatus | string;
+  source: string;
+  lastNotifiedAt: string | null;
+};
+
 export type FilingAggregate = {
   filing: FilingResponse;
   opportunity: OpportunitySummary | null;

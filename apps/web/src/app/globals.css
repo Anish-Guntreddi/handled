@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "./granted.css";
 
 :root {
   --background: #ffffff;
@@ -23,4 +24,27 @@ body {
   background: var(--background);
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
+}
+
+/* Lightweight fade/slide-in used by the how-it-works step-through.
+   Self-contained — no animation plugin dependency. */
+@keyframes captureos-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-in {
+  animation: captureos-fade-in 250ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-in {
+    animation: none;
+  }
 }

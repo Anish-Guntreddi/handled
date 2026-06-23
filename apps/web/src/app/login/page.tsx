@@ -1,10 +1,12 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 
-import { ApiError } from "@/lib/api";
+import { apiFetch, errorMessage } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
+import type { Me } from "@/lib/types";
 
 type Mode = "login" | "register";
 
@@ -22,17 +24,34 @@ export default function LoginPage() {
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
-    setBusy(true);
     setError(null);
+    if (mode === "register" && password.length < 8) {
+      setError("Password must be at least 8 characters.");
+      return;
+    }
+    setBusy(true);
     try {
       if (mode === "login") {
         await login(email, password);
       } else {
         await register(email, password, fullName || undefined, orgName || undefined);
       }
-      router.replace("/dashboard");
+      // Resolve the user's first org (the existing /auth/me → orgs[0] pattern) and
+      // land them inside the Handled app. New users start the onboarding wizard;
+      // returning users go straight to Find. No org → fall back to the dashboard.
+      const me = await apiFetch<Me>("/auth/me").catch(() => null);
+      const firstOrgId = me?.orgs[0]?.orgId;
+      if (firstOrgId) {
+        router.replace(
+          mode === "register"
+            ? `/orgs/${firstOrgId}/onboarding`
+            : `/orgs/${firstOrgId}/workspace/find`,
+        );
+      } else {
+        router.replace("/dashboard");
+      }
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Something went wrong");
+      setError(errorMessage(err));
     } finally {
       setBusy(false);
     }
@@ -41,7 +60,7 @@ export default function LoginPage() {
   return (
     <main className="grid min-h-screen place-items-center p-6">
       <div className="w-full max-w-sm rounded-2xl border border-neutral-200 bg-white p-8 shadow-sm">
-        <h1 className="text-xl font-semibold tracking-tight">CaptureOS</h1>
+        <h1 className="text-xl font-semibold tracking-tight">Handled</h1>
         <p className="mt-1 text-sm text-neutral-500">
           {mode === "login" ? "Sign in to your account" : "Create your account"}
         </p>
@@ -70,6 +89,8 @@ export default function LoginPage() {
             onChange={setPassword}
             placeholder="••••••••"
             required
+            minLength={mode === "register" ? 8 : undefined}
+            hint={mode === "register" ? "At least 8 characters." : undefined}
           />
           {mode === "register" && (
             <Field
@@ -105,6 +126,13 @@ export default function LoginPage() {
             ? "Need an account? Sign up"
             : "Already have an account? Sign in"}
         </button>
+
+        <p className="mt-6 border-t border-neutral-100 pt-4 text-center text-xs text-neutral-400">
+          New to Handled?{" "}
+          <Link href="/how-it-works" className="text-neutral-600 underline hover:text-neutral-900">
+            See how it works
+          </Link>
+        </p>
       </div>
     </main>
   );
@@ -117,6 +145,8 @@ function Field({
   type = "text",
   placeholder,
   required,
+  minLength,
+  hint,
 }: {
   label: string;
   value: string;
@@ -124,6 +154,8 @@ function Field({
   type?: string;
   placeholder?: string;
   required?: boolean;
+  minLength?: number;
+  hint?: string;
 }) {
   return (
     <label className="block text-sm">
@@ -134,8 +166,10 @@ function Field({
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
         required={required}
+        minLength={minLength}
         className="mt-1 w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-900 focus:ring-1 focus:ring-neutral-900"
       />
+      {hint && <span className="mt-1 block text-xs text-neutral-400">{hint}</span>}
     </label>
   );
 }

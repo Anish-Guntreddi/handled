@@ -1,0 +1,121 @@
+/* ============================================================================
+   Granted design-system foundation
+   ----------------------------------------------------------------------------
+   The shared visual layer every Granted surface (Find / Copilot / Pursue /
+   Stay eligible / onboarding) builds on. Tokens are exposed as CSS variables
+   scoped to `.granted` so the new dark experience never bleeds into the
+   existing neutral CaptureOS routes (dashboard, login, orgs workspace).
+
+   Font variables (--font-granted-*) are provided by next/font in
+   src/lib/granted-fonts.ts and applied on the same `.granted` wrapper.
+   ========================================================================== */
+
+.granted {
+  /* ---- Ink / surfaces ---- */
+  --gr-bg: #16130e;
+  --gr-surface: #211c15;
+  --gr-surface-raised: #251f17;
+  --gr-input: #1b1710;
+  --gr-hover: #2a2419;
+
+  /* ---- Borders ---- */
+  --gr-border: #352d22;
+  --gr-border-soft: #2a241b;
+  --gr-border-input: #3a3225;
+  --gr-border-strong: #4a4030;
+
+  /* ---- Text ---- */
+  --gr-text: #f0e8d8;
+  --gr-text-strong: #f2eadb;
+  --gr-heading: #f4ecdc;
+  --gr-muted: #b3a88f;
+  --gr-muted-2: #a2967c;
+  --gr-muted-3: #8a7e68;
+  --gr-muted-4: #7e7460;
+  --gr-placeholder: #736a57;
+
+  /* ---- Primary green ---- */
+  --gr-green: #2e9e66;
+  --gr-green-hover: #38b074;
+  --gr-green-bright: #6fd79a;
+  --gr-green-bright-2: #57c98a;
+  --gr-on-green: #0c1a11;
+
+  /* ---- "Money" panel ---- */
+  --gr-money-bg: #10402b;
+  --gr-money-border: #1c5a3c;
+  --gr-money-text: #7ed9a5;
+
+  /* ---- Amber (NEW / review) ---- */
+  --gr-amber: #f2be6e;
+
+  /* ---- Radii ---- */
+  --gr-radius-card: 14px;
+  --gr-radius-control: 10px;
+  --gr-radius-chip: 7px;
+
+  /* ---- Fonts (variables from next/font) ---- */
+  --gr-font-serif: var(--font-granted-serif), "Instrument Serif", serif;
+  --gr-font-sans: var(--font-granted-sans), "Hanken Grotesk", system-ui, sans-serif;
+  --gr-font-mono: var(--font-granted-mono), "JetBrains Mono", ui-monospace, monospace;
+
+  background: var(--gr-bg);
+  color: var(--gr-text);
+  font-family: var(--gr-font-sans);
+  -webkit-font-smoothing: antialiased;
+  min-height: 100vh;
+}
+
+.granted ::placeholder {
+  color: var(--gr-placeholder);
+}
+
+/* Faint diagonal weave used behind the Find hero, onboarding, and money panels. */
+.gr-weave {
+  background-color: var(--gr-bg);
+  background-image:
+    repeating-linear-gradient(24deg, rgba(255, 255, 255, 0.02) 0 1px, transparent 1px 9px),
+    repeating-linear-gradient(-24deg, rgba(127, 215, 165, 0.03) 0 1px, transparent 1px 12px);
+}
+
+/* ---- Keyframes (from the design source) ---- */
+@keyframes gr-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes gr-rise {
+  from {
+    transform: translateY(14px);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+
+/* Loading-skeleton shimmer (Find feed). */
+@keyframes gr-shimmer {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}
+
+.gr-animate-rise {
+  animation: gr-rise 0.5s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+.gr-animate-spin {
+  animation: gr-spin 0.8s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gr-animate-rise,
+  .gr-animate-spin,
+  [style*="gr-shimmer"] {
+    animation: none !important;
+  }
+}

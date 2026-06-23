@@ -3,7 +3,7 @@ import "./globals.css";
 import { Providers } from "@/lib/providers";
 
 export const metadata: Metadata = {
-  title: "CaptureOS",
+  title: "Handled",
   description: "AI Filing OS — discover, prepare, and assemble filing-ready packages.",
 };
 
