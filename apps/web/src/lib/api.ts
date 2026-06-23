@@ -20,6 +20,34 @@ export class ApiError extends Error {
   }
 }
 
+// FastAPI/Pydantic validation errors arrive as a `details` array of
+// {loc, msg} entries. The top-level message ("Request validation failed") is
+// useless to a user, so prefer a readable summary built from the field errors.
+type ValidationDetail = { loc?: unknown[]; msg?: string };
+
+function formatValidationDetails(details: unknown): string | null {
+  if (!Array.isArray(details) || details.length === 0) return null;
+  const parts = (details as ValidationDetail[])
+    .map((d) => {
+      const field = Array.isArray(d.loc) ? d.loc[d.loc.length - 1] : undefined;
+      const msg = d.msg ?? "is invalid";
+      return field ? `${String(field)}: ${msg}` : msg;
+    })
+    .filter(Boolean);
+  return parts.length > 0 ? parts.join("; ") : null;
+}
+
+// Human-readable message for an error, preferring field-level validation detail.
+export function errorMessage(err: unknown, fallback = "Something went wrong"): string {
+  if (err instanceof ApiError) {
+    if (err.code === "validation_error") {
+      return formatValidationDetails(err.details) ?? err.message;
+    }
+    return err.message;
+  }
+  return fallback;
+}
+
 // The AuthProvider registers a getter so every request auto-attaches the token.
 let tokenGetter: () => string | null = () => null;
 export function setTokenGetter(fn: () => string | null): void {

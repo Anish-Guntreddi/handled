@@ -16,7 +16,7 @@ export default function Home() {
 
   return (
     <main className="grid min-h-screen place-items-center text-neutral-500">
-      <span>Loading CaptureOS…</span>
+      <span>Loading Handled…</span>
     </main>
   );
 }
