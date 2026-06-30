@@ -15,6 +15,7 @@ from captureos.api import (
     documents,
     filings,
     forms,
+    guardrails,
     health,
     obligations,
     onboarding,
@@ -44,6 +45,7 @@ api_router.include_router(forms.router)
 api_router.include_router(corpus.router)
 api_router.include_router(audit.router)
 api_router.include_router(billing.router)
+api_router.include_router(guardrails.router)
 # The unauthenticated webhook is only mounted for a provider that signs its callbacks (Stripe).
 # In mock mode it is intentionally absent — mock upgrades go through the authenticated checkout,
 # so there is no unauthenticated route that could escalate an arbitrary org's plan.
