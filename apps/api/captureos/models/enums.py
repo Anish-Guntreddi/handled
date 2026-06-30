@@ -125,6 +125,53 @@ class GeneratedDocStatus(StrEnum):
 class ApprovalTarget(StrEnum):
     recommendation = "recommendation"
     package = "package"
+    payment_event = "payment_event"  # FR-GD-5: guardrails escalation to human gate
+
+
+# ── Spend Guardrails vertical (PRD §17) ─────────────────────────────────────
+class ConnectedAccountStatus(StrEnum):
+    active = "active"
+    paused = "paused"
+    disconnected = "disconnected"
+
+
+class ConnectedAccountProvider(StrEnum):
+    plaid = "plaid"
+    stripe = "stripe"
+    mastercard_agent_pay = "mastercard_agent_pay"
+    manual = "manual"
+
+
+class ConnectedAccountDefaultAction(StrEnum):
+    allow = "allow"
+    escalate = "escalate"
+
+
+class SpendPolicyStatus(StrEnum):
+    active = "active"
+    flagged_for_review = "flagged_for_review"
+
+
+class PaymentDecisionAction(StrEnum):
+    allow = "allow"
+    block = "block"
+    escalate = "escalate"
+
+
+class PaymentEventStatus(StrEnum):
+    received = "received"
+    evaluated = "evaluated"
+    allowed = "allowed"
+    escalated = "escalated"
+    approved = "approved"
+    rejected = "rejected"
+    blocked = "blocked"
+    settled = "settled"
+
+
+class PaymentInitiatedBy(StrEnum):
+    agent = "agent"
+    human = "human"
 
 
 class ApprovalDecision(StrEnum):

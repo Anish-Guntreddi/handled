@@ -20,6 +20,7 @@ from captureos.models.jobs import WorkflowJob
 from captureos.models.obligations import Obligation
 from captureos.models.opportunities import Opportunity
 from captureos.models.org import Organization, OrgMember, User
+from captureos.models.guardrails import ConnectedAccount, PaymentEvent, SpendPolicy
 from captureos.models.workflow import AgentRun, WorkflowRun, WorkflowStep
 
 __all__ = [
@@ -50,4 +51,7 @@ __all__ = [
     "WorkflowRun",
     "WorkflowStep",
     "WorkflowJob",
+    "ConnectedAccount",
+    "SpendPolicy",
+    "PaymentEvent",
 ]
