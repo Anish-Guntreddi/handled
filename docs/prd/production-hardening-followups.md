@@ -12,7 +12,7 @@
 
 ## From the WS0 agent-fleet inventory (deferred by design)
 - ✅ **done** — `ComplianceCalendarAgent` converted to a deterministic service (`services/obligations.py::derive_compliance_obligations`); the LLM agent + `agents/calendar.py` are gone. Same output shape, `obligation_sync` behavior unchanged, no token spend / provider dependency.
-- `OpportunityResearchAgent` → flash for the bulk-research portion (disambiguate from `FitScoringAgent` in the same module).
+- ✅ **done** — `OpportunityResearchAgent` downgraded to **flash** (bulk agency/prior-award research); `FitScoringAgent` in the same module stays **pro** for the bid/no-bid judgment.
 - **Vertex provider swap** — deferred with deployment; flip `GEMINI_BACKEND=vertex` (ADC on `captureos-prod`) before production. (`ModelTier.bulk` was added in WS2.)
 
 ## Deployment (deferred per project decision — localhost-first)

@@ -20,7 +20,7 @@
 | `GrantFitAgent` | `agents/grant.py` | yes | **pro** | kept | Apply/review/no-apply judgment |
 | `FitRecommendationAgent` | `agents/recommendation.py` | yes | **pro** | kept | Pursue / do-not-pursue judgment |
 | `NarrativeGenerationAgent` | `agents/narrative.py` | yes | **pro** | kept | Final written-deliverable quality |
-| `OpportunityResearchAgent` | `agents/opportunity.py` | yes | pro → **flash** (candidate) | ⏳ deferred | Bulk research is flash-able; validate in the workstream (paired with FitScoring in same file) |
+| `OpportunityResearchAgent` | `agents/opportunity.py` | yes | pro → **flash** | ✅ applied (pro→flash) | Bulk agency/prior-award research is high-volume summarization, not judgment; `FitScoringAgent` in the same file stays **pro** |
 | `ComplianceCalendarAgent` | ~~`agents/calendar.py`~~ → `services/obligations.py` | **No → deterministic** | n/a (no LLM) | ✅ applied (converted) | Cert→obligation mapping is rule-based; now a pure `derive_compliance_obligations` service (no `get_llm`, no `AgentRun`) — same output shape, `obligation_sync` unchanged |
 
 ## New agents (created in their workstreams, not now)
