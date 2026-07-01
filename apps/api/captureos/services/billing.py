@@ -284,12 +284,27 @@ async def apply_webhook(session: AsyncSession, event: dict) -> bool:
     try:
         await session.flush()
     except IntegrityError:
-        # A concurrent double-delivery of this checkout won the race between the idempotency
-        # pre-check above and this flush. The unique constraint on ``RevenueRecord.external_id``
-        # already prevented a double-grant, so the loser is a clean no-op (never a 500 →
-        # avoids a spurious Stripe retry). Mirrors the subscription path's guard.
+        # A unique-constraint collision on flush. Only ONE cause is a safe no-op:
+        #   * a concurrent DUPLICATE checkout delivery already inserted this RevenueRecord
+        #     (``RevenueRecord.external_id`` unique) — the double-grant is already prevented, so
+        #     the loser is a clean no-op; OR
+        #   * a concurrent DIFFERENT event for the same first-time purchase (e.g.
+        #     ``customer.subscription.created``) won the race to insert this org's Entitlement
+        #     (``Entitlement.org_id`` unique). Here THIS delivery's revenue has NOT been recorded,
+        #     so swallowing it would drop the ``RevenueRecord`` and suppress the Stripe retry that
+        #     would otherwise capture it.
+        # Disambiguate after rollback: no-op only if the revenue for this external_id now exists;
+        # otherwise re-raise so the webhook 500s and Stripe retries (revenue captured on retry, once
+        # the entitlement the other event created is visible and _upsert_entitlement updates it).
         await session.rollback()
-        return False
+        already_recorded = (
+            await session.execute(
+                select(RevenueRecord).where(RevenueRecord.external_id == external_id)
+            )
+        ).scalar_one_or_none()
+        if already_recorded is not None:
+            return False  # genuine duplicate delivery → clean no-op (no double-grant, no retry)
+        raise  # unrelated integrity conflict → let it 500 so Stripe retries (don't drop revenue)
     await record_event(
         "billing.payment_succeeded",
         org_id=org.id,
