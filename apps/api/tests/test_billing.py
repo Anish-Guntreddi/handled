@@ -13,11 +13,12 @@ from sqlalchemy import select
 
 from captureos.core.errors import PaymentRequiredError
 from captureos.db.session import session_scope
+from captureos.models.billing import RevenueRecord
 from captureos.models.entitlement import Entitlement
 from captureos.models.enums import EntitlementStatus, EntitlementTier, OrgPlan
 from captureos.models.org import Organization
 from captureos.providers.billing import map_subscription_status
-from captureos.services.billing import apply_subscription_event, assert_entitled
+from captureos.services.billing import apply_subscription_event, apply_webhook, assert_entitled
 from tests.conftest import auth_headers, register
 
 
@@ -293,6 +294,76 @@ async def test_gate_reads_entitlement_not_plan_label(client: AsyncClient) -> Non
         assert org is not None and org.plan == OrgPlan.autopilot.value
         with pytest.raises(PaymentRequiredError):
             await assert_entitled(session, org, "package")
+
+
+def _checkout_event(*, org_id: str, external_id: str, product: str = "sprint") -> dict:
+    """Build a normalized ``checkout.completed`` event as the Stripe provider would emit."""
+    return {
+        "type": "checkout.completed",
+        "event_id": f"evt_{external_id}",
+        "org_id": org_id,
+        "product": product,
+        "amount_cents": 29900,
+        "external_id": external_id,
+    }
+
+
+async def test_checkout_delivery_replay_is_idempotent(client: AsyncClient) -> None:
+    # A replayed ``checkout.completed`` delivery must not double-charge or re-grant: the
+    # RevenueRecord idempotency pre-check makes the second delivery a clean no-op.
+    _headers, org_id = await _setup(client, "co-replay@example.com")
+    event = _checkout_event(org_id=org_id, external_id="sess_replay_1")
+
+    async with session_scope() as session:
+        assert await apply_webhook(session, dict(event)) is True
+    async with session_scope() as session:
+        assert await apply_webhook(session, dict(event)) is False  # replay → no-op
+
+    async with session_scope() as session:
+        revenue = (
+            await session.execute(
+                select(RevenueRecord).where(RevenueRecord.org_id == uuid.UUID(org_id))
+            )
+        ).scalars().all()
+        assert len(revenue) == 1  # exactly one charge recorded
+        ent = await _entitlement(session, org_id)
+        assert ent is not None and ent.status == EntitlementStatus.active.value
+
+
+async def test_concurrent_checkout_double_delivery_is_clean_noop(client: AsyncClient) -> None:
+    # The rare race: two concurrent deliveries of the same checkout both pass the idempotency
+    # pre-check (neither sees the other's uncommitted RevenueRecord), then both flush. The unique
+    # constraint on external_id turns the loser's flush into an IntegrityError — which the guard
+    # must swallow into a clean no-op (return False), NOT a 500 that triggers a Stripe retry.
+    #
+    # Determinism: the loser session runs under REPEATABLE READ with its snapshot pinned BEFORE the
+    # winner commits, so its idempotency pre-check cannot see the winner's row and it proceeds to
+    # the conflicting flush. Postgres still enforces the unique constraint against committed data.
+    _headers, org_id = await _setup(client, "co-race@example.com")
+    event = _checkout_event(org_id=org_id, external_id="sess_race_1")
+
+    from captureos.db.session import get_sessionmaker
+
+    sessionmaker = get_sessionmaker()
+    async with sessionmaker() as loser:
+        # Pin the loser's snapshot before the winner commits (REPEATABLE READ + a first read).
+        await loser.connection(execution_options={"isolation_level": "REPEATABLE READ"})
+        await loser.execute(select(RevenueRecord.id).limit(1))
+
+        async with session_scope() as winner:
+            assert await apply_webhook(winner, dict(event)) is True  # winner commits the charge
+
+        # Loser's pre-check is blind to the committed row; its flush hits the unique constraint →
+        # guard swallows the IntegrityError into a clean no-op.
+        assert await apply_webhook(loser, dict(event)) is False
+
+    async with session_scope() as session:
+        revenue = (
+            await session.execute(
+                select(RevenueRecord).where(RevenueRecord.external_id == "sess_race_1")
+            )
+        ).scalars().all()
+        assert len(revenue) == 1  # no double-charge
 
 
 async def test_unresolvable_subscription_event_is_noop(client: AsyncClient) -> None:
