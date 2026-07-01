@@ -116,12 +116,18 @@ def _extra_topics(settings: Settings) -> list[WatchTopic]:
     return out
 
 
-def active_watchlist(settings: Settings) -> Watchlist:
-    """The full watch surface for a run: defaults + operator extras (deduped by key)."""
+def active_watchlist(
+    settings: Settings, *, jurisdictions: list[str] | None = None
+) -> Watchlist:
+    """The watch surface for a run: defaults + operator extras (deduped by key), restricted to the
+    enabled jurisdictions. Federal-first: with the default ``corpus_jurisdictions='federal'`` every
+    (federal) default topic is kept; state/local topics only appear once their jurisdiction is
+    enabled — the same config gate the source registry uses (``corpus_jurisdiction_list``)."""
+    allowed = set(jurisdictions if jurisdictions is not None else settings.corpus_jurisdiction_list)
     seen: set[str] = set()
     topics: list[WatchTopic] = []
     for topic in (*DEFAULT_WATCHLIST, *_extra_topics(settings)):
-        if topic.key in seen:
+        if topic.jurisdiction not in allowed or topic.key in seen:
             continue
         seen.add(topic.key)
         topics.append(topic)

@@ -1,8 +1,10 @@
-"""Corpus sync entrypoint — runs one full ingest pass, then exits.
+"""Corpus sync entrypoint — runs one FULL ingest pass (every enabled source), then exits.
 
-A scheduler/cron (or a k8s CronJob) invokes this on the source-native cadences
-(regs daily, forms weekly, catalogs monthly). Scheduling itself is deferred — this is the unit
-of work it triggers. Run manually with: ``python -m captureos.corpus.sync``.
+This is the whole-corpus unit of work. The tiered-cadence scheduler
+(``captureos.corpus.schedule``) instead runs sources per cadence (Federal Register weekly,
+eCFR/FAR monthly, IRS/SBA quarterly); scheduling itself is deferred — the real cron
+(Cloud Scheduler -> Run Job) lands with deployment. Run a full pass manually with:
+``python -m captureos.corpus.sync`` (or ``make corpus-sync`` for sync + embed).
 """
 
 from __future__ import annotations

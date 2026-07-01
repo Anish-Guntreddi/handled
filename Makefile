@@ -75,6 +75,14 @@ corpus-sync: ## Run one corpus sync + embed pass (WS2 knowledge engine; a cron c
 corpus-discover: ## Run one autonomous discovery sweep + embed (WS2; proposes deduped new targets)
 	cd $(API_DIR) && uv run python -m captureos.corpus.discover && uv run python -m captureos.corpus.embed
 
+.PHONY: corpus-schedule
+corpus-schedule: ## Run the local tiered-cadence scheduler loop (WS2; localhost stand-in for Cloud Scheduler)
+	cd $(API_DIR) && uv run python -m captureos.corpus.schedule
+
+.PHONY: corpus-schedule-once
+corpus-schedule-once: ## Run whatever corpus cadence tiers are due now, then exit (the cron unit of work)
+	cd $(API_DIR) && uv run python -m captureos.corpus.schedule --once
+
 # ---------- Frontend (web) ----------
 .PHONY: web-install
 web-install: ## Install frontend deps

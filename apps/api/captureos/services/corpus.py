@@ -7,20 +7,22 @@ which a scheduler/cron will call on the daily/weekly/monthly cadences (schedulin
 
 from __future__ import annotations
 
-from captureos.config import get_settings
-from captureos.corpus.adapters import enabled_adapters
+from captureos.config import Settings, get_settings
+from captureos.corpus.adapters import CorpusAdapter, enabled_adapters
 from captureos.corpus.ingest import ingest_items
 from captureos.db.session import session_scope
 from captureos.logging import get_logger
+from captureos.models.enums import CorpusCadence
 
 logger = get_logger(__name__)
 
 
-async def run_corpus_sync() -> dict[str, int]:  # pragma: no cover - runs live adapters (network)
-    """Fetch from every enabled adapter and ingest. One failed source never aborts the rest."""
-    settings = get_settings()
+async def _ingest_from_adapters(
+    adapters: list[CorpusAdapter],
+) -> dict[str, int]:  # pragma: no cover - runs live adapters (network)
+    """Fetch + ingest from a set of adapters. One failed source never aborts the rest."""
     totals = {"created": 0, "updated": 0, "unchanged": 0}
-    for adapter in enabled_adapters(settings):
+    for adapter in adapters:
         try:
             items = await adapter.fetch()
         except Exception as exc:  # noqa: BLE001 - isolate a bad source; keep the others going
@@ -33,5 +35,15 @@ async def run_corpus_sync() -> dict[str, int]:  # pragma: no cover - runs live a
         for key in totals:
             totals[key] += counts[key]
         logger.info("corpus.adapter_done", adapter=adapter.name, **counts)
-    logger.info("corpus.sync_complete", **totals)
+    return totals
+
+
+async def run_corpus_sync(
+    *, settings: Settings | None = None, cadence: CorpusCadence | None = None
+) -> dict[str, int]:  # pragma: no cover - runs live adapters (network)
+    """Fetch from the enabled adapters and ingest. Pass ``cadence`` to run only the sources due on
+    that tier (the scheduler does this); with no cadence this runs every enabled source."""
+    settings = settings or get_settings()
+    totals = await _ingest_from_adapters(enabled_adapters(settings, cadence=cadence))
+    logger.info("corpus.sync_complete", cadence=cadence.value if cadence else "all", **totals)
     return totals
