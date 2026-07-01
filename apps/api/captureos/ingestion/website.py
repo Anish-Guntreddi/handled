@@ -79,24 +79,32 @@ class _PinnedResolvingBackend(httpcore.AnyIOBackend):
             )
         except Exception as exc:  # noqa: BLE001 - DNS failure → refuse (fetch degrades to empty)
             raise httpcore.ConnectError(f"DNS resolution failed for {host!r}") from exc
-        pinned_ip: str | None = None
+        pinned_ips: list[str] = []
         for info in infos:
             if _ip_is_disallowed(ipaddress.ip_address(info[4][0])):
                 # A rebinding / private resolution at connect time → refuse before dialing (CON /
                 # NFR-2 fail-closed). Never open a socket to an unvalidated address.
                 raise httpcore.ConnectError(f"{host!r} resolved to a non-public address")
-            if pinned_ip is None:
-                pinned_ip = str(info[4][0])
-        if pinned_ip is None:
+            pinned_ips.append(str(info[4][0]))
+        if not pinned_ips:
             raise httpcore.ConnectError(f"no address for {host!r}")
-        # Dial the exact validated IP (not the hostname) — no second, unguarded resolution.
-        return await super().connect_tcp(
-            pinned_ip,
-            port,
-            timeout=timeout,
-            local_address=local_address,
-            socket_options=socket_options,
-        )
+        # Dial the validated IPs (not the hostname) in order, falling back across a multi-homed /
+        # dual-stack host so a dead first address doesn't degrade a legitimate site to empty text.
+        # Every candidate was checked public above, so the SSRF guarantee holds for whichever wins;
+        # there is no second, unguarded hostname resolution.
+        last_exc: Exception | None = None
+        for ip in pinned_ips:
+            try:
+                return await super().connect_tcp(
+                    ip,
+                    port,
+                    timeout=timeout,
+                    local_address=local_address,
+                    socket_options=socket_options,
+                )
+            except Exception as exc:  # noqa: BLE001 - try the next validated address, else re-raise
+                last_exc = exc
+        raise httpcore.ConnectError(f"could not connect to any address for {host!r}") from last_exc
 
 
 class _PinnedTransport(httpx.AsyncHTTPTransport):
