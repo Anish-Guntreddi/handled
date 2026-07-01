@@ -281,7 +281,7 @@ async def approve(
 async def build_package(
     ctx: OrgEditor, session: SessionDep, background_tasks: BackgroundTasks, filing_id: uuid.UUID
 ) -> WorkflowRunCreated:
-    assert_entitled(ctx.organization, "package")  # premium workflow (FR-BL-3)
+    await assert_entitled(session, ctx.organization, "package")  # premium workflow (FR-BL-3)
     filing = await _get_filing_or_404(session, ctx.org_id, filing_id)
     if filing.status not in _PACKAGEABLE:
         # The recommendation must be human-approved before a package can be built (FR-AP-1).
@@ -314,7 +314,7 @@ async def export_package(
     filing_id: uuid.UUID,
     format: str = Query("md", pattern="^(md|pdf|docx)$"),
 ) -> Response:
-    assert_entitled(ctx.organization, "package")  # premium workflow (FR-BL-3)
+    await assert_entitled(session, ctx.organization, "package")  # premium workflow (FR-BL-3)
     filing = await _get_filing_or_404(session, ctx.org_id, filing_id)
     # CON-1/CON-2: export is gated behind human package approval; it only ever returns a download.
     if filing.status != FilingStatus.ready.value:

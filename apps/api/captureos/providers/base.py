@@ -152,8 +152,12 @@ class BillingProvider(Protocol):
         self, *, org_id: str, product: str, amount_cents: int, success_url: str
     ) -> CheckoutSession: ...
 
-    # Returns a normalized event dict {type, org_id, product, amount_cents, external_id}
-    # when the payload is authentic, else None (CON-4: signature verified server-side).
+    # Returns a normalized event dict when the payload is authentic, else None (CON-4:
+    # signature verified server-side). ``type`` selects the shape: "checkout.completed"
+    # {org_id, product, amount_cents, external_id, subscription_id}, "subscription.updated"/
+    # "subscription.deleted" {org_id, tier, status, stripe_subscription_id, current_period_end},
+    # or "invoice.payment_failed" {stripe_subscription_id}. All carry the Stripe "event_id" for
+    # idempotent replay.
     def verify_and_parse_webhook(self, payload: bytes, signature: str | None) -> dict | None: ...
 
 

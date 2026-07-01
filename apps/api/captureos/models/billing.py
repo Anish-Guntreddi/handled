@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, Integer, Numeric, String, Text, func
+from sqlalchemy import DateTime, Integer, Numeric, String, Text, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -38,6 +38,21 @@ class RevenueRecord(UUIDPKMixin, OrgScopedMixin, TimestampMixin, Base):
     charged_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+
+class BillingWebhookEvent(UUIDPKMixin, OrgScopedMixin, TimestampMixin, Base):
+    """Idempotency ledger for verified Stripe billing webhooks (subscription lifecycle).
+
+    Each processed Stripe event id is recorded exactly once (``stripe_event_id`` unique), so a
+    replayed delivery is a no-op — no double grant / double charge (CON-4). The row is only
+    written after the event is resolved to an org, so it stays org-scoped like every tenant table.
+    """
+
+    __tablename__ = "billing_webhook_events"
+    __table_args__ = (UniqueConstraint("stripe_event_id"),)
+
+    stripe_event_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    event_type: Mapped[str] = mapped_column(String(64), nullable=False)
 
 
 class CustomerFeedback(UUIDPKMixin, OrgScopedMixin, TimestampMixin, Base):

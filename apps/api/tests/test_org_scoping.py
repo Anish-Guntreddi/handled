@@ -22,6 +22,7 @@ def test_new_spend_and_entitlement_tables_are_org_scoped() -> None:
         "spend_merchant_rules",
         "spend_authorizations",
         "entitlements",
+        "billing_webhook_events",
     ):
         table = Base.metadata.tables[name]
         assert "org_id" in table.columns, f"{name} must be org-scoped"

@@ -8,16 +8,28 @@ from httpx import AsyncClient
 from sqlalchemy import update
 
 from captureos.db.session import get_sessionmaker
+from captureos.models.entitlement import Entitlement
+from captureos.models.enums import EntitlementStatus
 from captureos.models.filings import GeneratedDocument
 from captureos.models.org import Organization
 from tests.conftest import auth_headers, register
 
 
 async def _upgrade(org_id: str, plan: str = "sprint") -> None:
-    """Grant the org the 'package' entitlement (M6 gates package build behind sprint+)."""
+    """Grant the org the 'package' entitlement (M6 gates package build behind sprint+).
+
+    The gate reads the durable Entitlement (not the plan label), so grant a real active
+    entitlement — the same state a verified Stripe webhook / mock checkout would persist."""
     async with get_sessionmaker()() as session:
         await session.execute(
             update(Organization).where(Organization.id == uuid.UUID(org_id)).values(plan=plan)
+        )
+        session.add(
+            Entitlement(
+                org_id=uuid.UUID(org_id),
+                tier=plan,
+                status=EntitlementStatus.active.value,
+            )
         )
         await session.commit()
 

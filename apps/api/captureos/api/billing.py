@@ -24,7 +24,7 @@ from captureos.schemas.billing import (
 from captureos.services.billing import (
     PREMIUM_FEATURES,
     PRODUCT_PRICES,
-    apply_webhook,
+    apply_billing_event,
     complete_mock_purchase,
     entitlements_for,
     start_checkout,
@@ -83,5 +83,5 @@ async def webhook(request: Request, session: SessionDep) -> WebhookResponse:
     if event is None:
         # Bad signature or malformed payload — reject without touching any org (CON-4).
         raise ValidationFailed("Invalid or unverifiable billing webhook")
-    fulfilled = await apply_webhook(session, event)
+    fulfilled = await apply_billing_event(session, event)
     return WebhookResponse(received=True, fulfilled=fulfilled)
