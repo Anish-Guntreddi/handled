@@ -12,6 +12,7 @@ from typing import Protocol, runtime_checkable
 
 
 class ModelTier(StrEnum):
+    bulk = "bulk"  # cheapest long-context lane for high-volume triage (WS0/WS2 corpus discovery)
     flash = "flash"  # cheap/extractive (PRD NFR-6)
     pro = "pro"  # reasoning-heavy
 

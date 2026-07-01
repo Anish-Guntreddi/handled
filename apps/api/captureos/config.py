@@ -122,18 +122,28 @@ class Settings(BaseSettings):
     anthropic_api_key: str | None = None
     anthropic_model_pro: str = "claude-opus-4-8"
     anthropic_model_flash: str = "claude-haiku-4-5"
+    # `bulk` = the cheapest long-context lane for high-volume triage (the corpus-discovery Federal
+    # Register sweep, WS2). Distinct from `flash` so triage cost can be tuned independently.
+    gemini_model_bulk: str = "gemini-2.5-flash-lite"
+    anthropic_model_bulk: str = "claude-haiku-4-5"
     # Optional per-tier provider override (defaults to llm_provider). Lets the cheap "flash" lane
     # (doc extraction) and the "pro" lane (reasoning) run on DIFFERENT providers — e.g. Gemini
     # Flash for extraction + Claude for reasoning — with no agent-code change.
     llm_provider_flash: LLMProviderName | None = None
     llm_provider_pro: LLMProviderName | None = None
+    llm_provider_bulk: LLMProviderName | None = None
     llm_timeout_seconds: int = 60
     llm_max_retries: int = 2
 
     @property
     def active_llm_providers(self) -> set[LLMProviderName]:
         """Every LLM provider that can be selected (default + any per-tier override)."""
-        candidates = (self.llm_provider, self.llm_provider_pro, self.llm_provider_flash)
+        candidates = (
+            self.llm_provider,
+            self.llm_provider_pro,
+            self.llm_provider_flash,
+            self.llm_provider_bulk,
+        )
         return {p for p in candidates if p is not None}
 
     # ---- Embeddings ----
@@ -288,7 +298,7 @@ class Settings(BaseSettings):
     def _strip_origins(cls, v: str) -> str:
         return v.strip()
 
-    @field_validator("llm_provider_pro", "llm_provider_flash", mode="before")
+    @field_validator("llm_provider_pro", "llm_provider_flash", "llm_provider_bulk", mode="before")
     @classmethod
     def _blank_provider_to_none(cls, v: object) -> object:
         # A blank env value (LLM_PROVIDER_PRO=) means "no override" → fall back to llm_provider.

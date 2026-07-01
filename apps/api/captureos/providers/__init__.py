@@ -90,6 +90,8 @@ def get_llm(tier: ModelTier | None = None, settings: Settings | None = None) -> 
         provider = s.llm_provider_pro
     elif tier is ModelTier.flash and s.llm_provider_flash is not None:
         provider = s.llm_provider_flash
+    elif tier is ModelTier.bulk and s.llm_provider_bulk is not None:
+        provider = s.llm_provider_bulk
     return _build_llm(provider, s)
 
 

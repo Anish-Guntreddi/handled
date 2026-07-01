@@ -13,6 +13,14 @@ def _est_tokens(text: str) -> int:
     return max(1, len(text) // 4)
 
 
+def _gemini_model_for(settings: Settings, tier: ModelTier) -> str:
+    if tier is ModelTier.pro:
+        return settings.gemini_model_pro
+    if tier is ModelTier.bulk:
+        return settings.gemini_model_bulk
+    return settings.gemini_model_flash
+
+
 class MockLLM(LLMProvider):
     """Deterministic LLM for offline dev/test/CI. Same input → same output.
 
@@ -41,11 +49,7 @@ class MockLLM(LLMProvider):
             text = json.dumps({"_mock": True, "digest": digest})
         else:
             text = f"[mock:{tier.value}] deterministic response {digest}"
-        model = (
-            self._settings.gemini_model_pro
-            if tier is ModelTier.pro
-            else self._settings.gemini_model_flash
-        )
+        model = _gemini_model_for(self._settings, tier)
         return LLMResponse(
             text=text,
             model=f"mock/{model}",
@@ -71,11 +75,7 @@ class GeminiLLM(LLMProvider):
         self._client = genai.Client(api_key=settings.gemini_api_key)
 
     def _model_for(self, tier: ModelTier) -> str:
-        return (
-            self._settings.gemini_model_pro
-            if tier is ModelTier.pro
-            else self._settings.gemini_model_flash
-        )
+        return _gemini_model_for(self._settings, tier)
 
     async def generate(
         self,
@@ -140,11 +140,11 @@ class AnthropicLLM(LLMProvider):
         self._client = AsyncAnthropic(api_key=settings.anthropic_api_key)
 
     def _model_for(self, tier: ModelTier) -> str:
-        return (
-            self._settings.anthropic_model_pro
-            if tier is ModelTier.pro
-            else self._settings.anthropic_model_flash
-        )
+        if tier is ModelTier.pro:
+            return self._settings.anthropic_model_pro
+        if tier is ModelTier.bulk:
+            return self._settings.anthropic_model_bulk
+        return self._settings.anthropic_model_flash
 
     async def generate(
         self,

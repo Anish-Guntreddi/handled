@@ -45,10 +45,16 @@ class AgentError(Exception):
 
 @dataclass(slots=True)
 class AgentContext:
-    """Carries the DB session and workflow position an agent needs to record itself."""
+    """Carries the DB session and workflow position an agent needs to record itself.
+
+    ``org_id`` is ``None`` for a PLATFORM-GLOBAL run — an agent that acts on shared, org-less
+    state rather than a tenant's (e.g. WS2 corpus discovery over public-domain gov sources). No
+    ``AgentRun`` row is written for such a run (that table is org-scoped, NOT NULL); only an
+    org-less audit event is emitted.
+    """
 
     session: AsyncSession
-    org_id: uuid.UUID
+    org_id: uuid.UUID | None = None
     run_id: uuid.UUID | None = None
     step_id: uuid.UUID | None = None
     filing_id: uuid.UUID | None = None
@@ -76,6 +82,11 @@ class Agent[InputT: BaseModel, OutputT: BaseModel]:
     output_model: type[OutputT]
     system_prompt: str = ""
 
+    # Token usage of the most recent ``run`` (0 in mock mode). Lets a platform caller that does
+    # its own cost accounting (corpus discovery's token budget) read what a run actually burned.
+    last_input_tokens: int = 0
+    last_output_tokens: int = 0
+
     # --- subclasses implement at least one path ---
     def build_prompt(self, data: InputT) -> str:
         raise NotImplementedError
@@ -101,6 +112,8 @@ class Agent[InputT: BaseModel, OutputT: BaseModel]:
             )
             logger.error("agent.failed", agent=self.name, error=str(exc))
             raise
+        self.last_input_tokens = llm_resp.input_tokens if llm_resp else 0
+        self.last_output_tokens = llm_resp.output_tokens if llm_resp else 0
         await self._record(ctx, data, output, llm_resp, started, AgentRunStatus.success)
         return output
 
@@ -190,7 +203,9 @@ class Agent[InputT: BaseModel, OutputT: BaseModel]:
         in_tok = llm_resp.input_tokens if llm_resp else 0
         out_tok = llm_resp.output_tokens if llm_resp else 0
 
-        if ctx.step_id is not None:
+        # AgentRun is org-scoped (NOT NULL org_id); a platform-global run (org_id=None) records
+        # only the org-less audit event below, never a tenant-scoped AgentRun row.
+        if ctx.step_id is not None and ctx.org_id is not None:
             ctx.session.add(
                 AgentRun(
                     org_id=ctx.org_id,
