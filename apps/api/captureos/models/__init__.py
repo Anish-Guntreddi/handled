@@ -3,7 +3,12 @@
 
 from captureos.db.base import Base
 from captureos.models.audit import AuditEvent
-from captureos.models.billing import CustomerFeedback, RevenueRecord, Subscription
+from captureos.models.billing import (
+    BillingWebhookEvent,
+    CustomerFeedback,
+    RevenueRecord,
+    Subscription,
+)
 from captureos.models.company import CompanyProfile
 from captureos.models.corpus import CorpusChunk, CorpusDocument
 from captureos.models.documents import Document, DocumentChunk
@@ -33,6 +38,7 @@ from captureos.models.workflow import AgentRun, WorkflowRun, WorkflowStep
 __all__ = [
     "Base",
     "AuditEvent",
+    "BillingWebhookEvent",
     "CustomerFeedback",
     "RevenueRecord",
     "Subscription",
