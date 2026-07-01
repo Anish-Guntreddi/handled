@@ -16,10 +16,26 @@ import httpx
 
 from captureos.config import Settings
 from captureos.corpus.ingest import CorpusItem
+from captureos.ingestion.website import _is_safe_public_url
 from captureos.logging import get_logger
 from captureos.models.enums import CorpusAuthority, CorpusCadence, CorpusDocType
 
 logger = get_logger(__name__)
+
+
+async def _guard_outbound(name: str, url: str) -> bool:
+    """SSRF gate for an adapter's OWN outbound corpus fetch.
+
+    The discovery service validates a target's human-facing URL, but the adapters go on to build
+    and fetch DIFFERENT concrete URLs (the eCFR versioner API, hardcoded .gov endpoints, the
+    Firecrawl API). This vets the URL that is ACTUALLY sent to httpx — immediately before the
+    request — so a redirect / MITM / compromised endpoint can't point a corpus fetch at an internal
+    address (localhost, 169.254 metadata, private/reserved ranges). Legit public .gov hosts resolve
+    to public IPs and pass unchanged."""
+    if await _is_safe_public_url(url):
+        return True
+    logger.warning("corpus.fetch_blocked", adapter=name, url=url, reason="ssrf_guard")
+    return False
 
 
 @runtime_checkable
@@ -48,6 +64,8 @@ class FederalRegisterAdapter:
 
     async def fetch(self) -> list[CorpusItem]:  # pragma: no cover - live network
         url = "https://www.federalregister.gov/api/v1/documents.json"
+        if not await _guard_outbound(self.name, url):
+            return []
         params: dict[str, str | int] = {
             "per_page": self._per_page,
             "order": "newest",
@@ -91,9 +109,12 @@ class EcfrAdapter:
 
     async def fetch(self) -> list[CorpusItem]:  # pragma: no cover - live network
         items: list[CorpusItem] = []
+        titles_url = "https://www.ecfr.gov/api/versioner/v1/titles.json"
         async with httpx.AsyncClient(timeout=120.0) as client:
             # Use each title's actual latest published date (not "today" — eCFR has no future data).
-            meta = (await client.get("https://www.ecfr.gov/api/versioner/v1/titles.json")).json()
+            if not await _guard_outbound(self.name, titles_url):
+                return items
+            meta = (await client.get(titles_url)).json()
             latest = {
                 str(t.get("number")): t.get("up_to_date_as_of") or t.get("latest_amended_on")
                 for t in meta.get("titles", [])
@@ -104,6 +125,10 @@ class EcfrAdapter:
                     logger.warning("corpus.ecfr_no_date", title=title)
                     continue
                 url = f"https://www.ecfr.gov/api/versioner/v1/full/{as_of}/title-{title}.xml"
+                # Vet the CONCRETE versioner URL actually fetched (not the human URL the discovery
+                # service validated) right before the GET.
+                if not await _guard_outbound(self.name, url):
+                    continue  # one blocked part must not abort the rest
                 params = {"part": part} if part else None
                 resp = await client.get(url, params=params)
                 if resp.status_code != 200:
@@ -154,10 +179,13 @@ class FirecrawlAdapter:
     async def fetch(self) -> list[CorpusItem]:  # pragma: no cover - live network
         items: list[CorpusItem] = []
         headers = {"Authorization": f"Bearer {self._api_key}"}
+        api_url = "https://api.firecrawl.dev/v1/scrape"
         async with httpx.AsyncClient(timeout=90.0) as client:
+            if not await _guard_outbound(self.name, api_url):
+                return items
             for url in self._urls:
                 resp = await client.post(
-                    "https://api.firecrawl.dev/v1/scrape",
+                    api_url,
                     headers=headers,
                     json={"url": url, "formats": ["markdown"]},
                 )
@@ -236,6 +264,8 @@ class PdfAdapter:
                 if not src.url.lower().startswith("https://"):
                     logger.warning("corpus.pdf_skip_insecure", url=src.url)
                     continue
+                if not await _guard_outbound(self.name, src.url):
+                    continue  # SSRF: vet the concrete PDF URL right before the GET
                 resp = await client.get(src.url)
                 if resp.status_code != 200:
                     logger.warning("corpus.pdf_skip", url=src.url, code=resp.status_code)
