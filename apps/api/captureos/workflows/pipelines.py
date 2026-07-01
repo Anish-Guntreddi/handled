@@ -33,6 +33,8 @@ TIME_SAVED: dict[str, int] = {
     WorkflowType.package_build.value: 75,
     WorkflowType.obligation_sync.value: 20,
     WorkflowType.program_scan.value: 40,
+    # Enrich (brain) + match (scan) in one polled run.
+    WorkflowType.onboarding.value: 100,
 }
 
 
@@ -46,6 +48,26 @@ def _company_brain_pipeline(run: WorkflowRun) -> list[tuple[str, StepFn]]:
         await run_company_brain(ctx, state)
 
     return [("gather_sources", gather), ("build_profile", build)]
+
+
+def _onboarding_pipeline(run: WorkflowRun) -> list[tuple[str, StepFn]]:
+    """WS3: run the company-brain enrichment (website + uploaded ``.md`` docs → sourced evidence)
+    and THEN the program scan, in one polled run. The scan matches against the *enriched* profile;
+    ``user_overrides`` (wizard answers persisted by ``apply_onboarding``) still win over inferred
+    values because ``run_company_brain._apply_profile`` refuses to overwrite override keys."""
+    state: dict = {}
+
+    async def gather(ctx: StepContext) -> None:
+        state.update(await gather_company_sources(ctx))
+
+    async def build(ctx: StepContext) -> None:
+        await run_company_brain(ctx, state)
+
+    return [
+        ("gather_sources", gather),
+        ("build_profile", build),
+        ("find_programs", run_program_scan),
+    ]
 
 
 def _document_ingest_pipeline(run: WorkflowRun) -> list[tuple[str, StepFn]]:
@@ -101,6 +123,7 @@ def _program_scan_pipeline(run: WorkflowRun) -> list[tuple[str, StepFn]]:
 
 _PIPELINES = {
     WorkflowType.company_brain.value: _company_brain_pipeline,
+    WorkflowType.onboarding.value: _onboarding_pipeline,
     WorkflowType.document_ingest.value: _document_ingest_pipeline,
     WorkflowType.opportunity_scan.value: _opportunity_scan_pipeline,
     WorkflowType.requirement_extraction.value: _requirement_extraction_pipeline,

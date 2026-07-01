@@ -143,6 +143,8 @@ class WorkflowType(StrEnum):
     package_build = "package_build"
     obligation_sync = "obligation_sync"
     program_scan = "program_scan"
+    # Onboarding: enrich (company_brain) then match (program_scan) in one polled run (WS3).
+    onboarding = "onboarding"
 
 
 class CorpusAuthority(StrEnum):
