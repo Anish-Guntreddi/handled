@@ -46,6 +46,9 @@ async def _is_safe_public_url(url: str) -> bool:
     return True
 
 
+# Bound on manually-followed redirect hops (each one is re-validated by the SSRF guard).
+_MAX_REDIRECTS = 5
+
 _SKIP_TAGS = {"script", "style", "noscript", "svg", "head"}
 
 
@@ -87,14 +90,34 @@ async def fetch_website_text(
         logger.info("website.blocked_url", url=url, reason="ssrf_guard")
         return ""
     try:
+        # SSRF hardening (NFR-2): do NOT let httpx auto-follow redirects — a public homepage that
+        # 302s to an internal address (169.254.169.254 metadata, 10.x, 127.0.0.1, link-local) would
+        # be fetched unguarded. Follow manually in a bounded loop, re-running _is_safe_public_url on
+        # every hop's resolved Location and refusing (graceful empty) the first hop that fails.
         async with httpx.AsyncClient(
-            follow_redirects=True,
+            follow_redirects=False,
             timeout=timeout,
             headers={"User-Agent": "CaptureOS/0.1 (+https://captureos.app)"},
         ) as client:
-            resp = await client.get(url)
-            resp.raise_for_status()
-            return html_to_text(resp.text)[:max_chars]
+            current = url
+            for _hop in range(_MAX_REDIRECTS + 1):  # initial request + up to _MAX_REDIRECTS hops
+                resp = await client.get(current)
+                if not resp.is_redirect:  # 2xx/other: raise on 4xx/5xx, else return the body
+                    resp.raise_for_status()
+                    return html_to_text(resp.text)[:max_chars]
+                # ``is_redirect`` guarantees a Location header; resolve relative → absolute.
+                next_url = str(httpx.URL(current).join(resp.headers["location"]))
+                if not await _is_safe_public_url(next_url):
+                    logger.info(
+                        "website.blocked_redirect",
+                        from_url=current,
+                        to_url=next_url,
+                        reason="ssrf_guard",
+                    )
+                    return ""  # never fetch the unvalidated host — degrade like the guard-refusal
+                current = next_url
+            logger.info("website.too_many_redirects", url=url, max_redirects=_MAX_REDIRECTS)
+            return ""
     except Exception as exc:  # noqa: BLE001 - graceful degradation (NFR-7/8)
         logger.info("website.fetch_failed", url=url, error=str(exc))
         return ""

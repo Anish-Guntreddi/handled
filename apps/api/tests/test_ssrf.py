@@ -8,6 +8,9 @@ Covers the two server-side fetch surfaces that take a URL:
 
 from __future__ import annotations
 
+from urllib.parse import urlparse
+
+import httpx
 import pytest
 from httpx import AsyncClient
 
@@ -32,6 +35,58 @@ _UNSAFE_URLS = [
 @pytest.mark.parametrize("url", _UNSAFE_URLS)
 async def test_blocks_unsafe_urls(url: str) -> None:
     assert await _is_safe_public_url(url) is False
+
+
+async def test_redirect_to_internal_metadata_is_not_followed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SSRF redirect-bypass regression: a PUBLIC homepage that ``302``-redirects to the cloud
+    metadata address must NOT be followed. ``fetch_website_text`` re-validates every redirect hop
+    through ``_is_safe_public_url`` and short-circuits to empty text, so the internal address is
+    never requested and no internal body enters the result.
+
+    Hermetic — ``httpx.MockTransport`` (no real network) plus a stub that keeps the metadata verdict
+    REAL. Mutation note: the internal-host verdict delegates to the actual guard, so weakening
+    ``_is_safe_public_url`` to allow link-local/private IPs would make the internal body leak and
+    fail this test (the assertions are not satisfiable by a no-op guard)."""
+    public = "http://public-homepage.test/"
+    metadata = "http://169.254.169.254/latest/meta-data/"
+    internal_secret = "AKIA_INTERNAL_ROOT_CREDENTIAL_LEAK"  # noqa: S105 - fake marker, not a secret
+    requested: list[str] = []
+
+    def _handler(request: httpx.Request) -> httpx.Response:
+        requested.append(str(request.url))
+        if request.url.host == "public-homepage.test":
+            return httpx.Response(302, headers={"Location": metadata})
+        # Only reachable if the guard wrongly let the redirect through — this body must never leak.
+        return httpx.Response(200, text=f"<html><body>{internal_secret}</body></html>")
+
+    transport = httpx.MockTransport(_handler)
+    real_client = httpx.AsyncClient
+
+    def _client_factory(*args: object, **kwargs: object) -> httpx.AsyncClient:
+        kwargs["transport"] = transport
+        return real_client(*args, **kwargs)
+
+    monkeypatch.setattr(website.httpx, "AsyncClient", _client_factory)
+
+    # Force only the synthetic public host safe (so the fetch can start without real DNS); every
+    # other host — including the metadata IP — keeps the REAL guard's verdict (link-local → False).
+    real_guard = website._is_safe_public_url
+
+    async def _guard(url: str) -> bool:
+        if urlparse(url).hostname == "public-homepage.test":
+            return True
+        return await real_guard(url)
+
+    monkeypatch.setattr(website, "_is_safe_public_url", _guard)
+
+    result = await website.fetch_website_text(public)
+
+    assert result == ""  # blocked redirect → graceful empty, identical to a first-hop guard refusal
+    assert internal_secret not in result  # no internal body entered the result
+    assert requested == [public]  # only the initial public GET; the metadata IP was never fetched
+    assert not any("169.254.169.254" in u for u in requested)
 
 
 # --- WS2 discovery: agent-proposed URLs go through the SSRF guard (https + allowlisted host) ---
