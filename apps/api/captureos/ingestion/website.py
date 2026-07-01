@@ -7,10 +7,12 @@ from __future__ import annotations
 import contextlib
 import ipaddress
 import socket
+from collections.abc import Iterable
 from html.parser import HTMLParser
 from urllib.parse import urlparse
 
 import anyio
+import httpcore
 import httpx
 
 from captureos.logging import get_logger
@@ -18,10 +20,27 @@ from captureos.logging import get_logger
 logger = get_logger(__name__)
 
 
+def _ip_is_disallowed(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    """True for any address a server-side fetch must never reach (SSRF): loopback, private,
+    link-local (169.254.169.254 cloud metadata), reserved, multicast, or unspecified."""
+    return (
+        ip.is_private
+        or ip.is_loopback
+        or ip.is_link_local
+        or ip.is_reserved
+        or ip.is_multicast
+        or ip.is_unspecified
+    )
+
+
 async def _is_safe_public_url(url: str) -> bool:
-    """SSRF guard: only http(s) to a public IP. Blocks localhost, link-local
-    (169.254.169.254 metadata), private, and reserved ranges. Residual DNS-rebinding
-    risk remains without IP pinning, which httpx does not expose simply (NFR-2)."""
+    """SSRF guard (per-hop verdict): only http(s) to a public IP. Blocks localhost, link-local
+    (169.254.169.254 metadata), private, and reserved ranges.
+
+    The DNS-rebinding TOCTOU window that used to remain here — httpx re-resolved the host
+    independently at connect time, so a low-TTL attacker could pass this check then connect to an
+    internal IP — is now closed by ``_PinnedResolvingBackend`` below, which re-resolves,
+    re-validates, and connects to that exact validated IP at socket-connect time (NFR-2)."""
     parsed = urlparse(url)
     if parsed.scheme not in ("http", "https") or not parsed.hostname:
         return False
@@ -32,18 +51,63 @@ async def _is_safe_public_url(url: str) -> bool:
         )
     except Exception:  # noqa: BLE001 - DNS failure → treat as unreachable, degrade gracefully
         return False
-    for info in infos:
-        ip = ipaddress.ip_address(info[4][0])
-        if (
-            ip.is_private
-            or ip.is_loopback
-            or ip.is_link_local
-            or ip.is_reserved
-            or ip.is_multicast
-            or ip.is_unspecified
-        ):
-            return False
-    return True
+    return all(not _ip_is_disallowed(ipaddress.ip_address(info[4][0])) for info in infos)
+
+
+class _PinnedResolvingBackend(httpcore.AnyIOBackend):
+    """Network backend that resolves the host, refuses unless EVERY resolved address is a public IP,
+    then connects to that validated IP — so the address the SSRF check approved is exactly the
+    address the socket connects to. This closes the DNS-rebinding TOCTOU window: httpx/httpcore no
+    longer re-resolve the host independently at connect time (the resolution and the connect use one
+    ``getaddrinfo`` result, and we dial the literal IP, not the hostname).
+
+    TLS is unaffected: httpcore derives the TLS ``server_hostname`` from the request origin (the
+    hostname), NOT from the connect target, so SNI + certificate verification still validate against
+    the original hostname for legitimate HTTPS fetches."""
+
+    async def connect_tcp(
+        self,
+        host: str,
+        port: int,
+        timeout: float | None = None,  # noqa: ASYNC109 - override matches httpcore's backend API
+        local_address: str | None = None,
+        socket_options: Iterable[httpcore.SOCKET_OPTION] | None = None,
+    ) -> httpcore.AsyncNetworkStream:
+        try:
+            infos = await anyio.to_thread.run_sync(
+                lambda: socket.getaddrinfo(host, port, proto=socket.IPPROTO_TCP)
+            )
+        except Exception as exc:  # noqa: BLE001 - DNS failure → refuse (fetch degrades to empty)
+            raise httpcore.ConnectError(f"DNS resolution failed for {host!r}") from exc
+        pinned_ip: str | None = None
+        for info in infos:
+            if _ip_is_disallowed(ipaddress.ip_address(info[4][0])):
+                # A rebinding / private resolution at connect time → refuse before dialing (CON /
+                # NFR-2 fail-closed). Never open a socket to an unvalidated address.
+                raise httpcore.ConnectError(f"{host!r} resolved to a non-public address")
+            if pinned_ip is None:
+                pinned_ip = str(info[4][0])
+        if pinned_ip is None:
+            raise httpcore.ConnectError(f"no address for {host!r}")
+        # Dial the exact validated IP (not the hostname) — no second, unguarded resolution.
+        return await super().connect_tcp(
+            pinned_ip,
+            port,
+            timeout=timeout,
+            local_address=local_address,
+            socket_options=socket_options,
+        )
+
+
+class _PinnedTransport(httpx.AsyncHTTPTransport):
+    """``AsyncHTTPTransport`` whose connection pool uses ``_PinnedResolvingBackend``. httpcore's
+    ``AsyncConnectionPool`` accepts ``network_backend`` as a public argument but httpx's transport
+    doesn't forward it, so swap it on the already-built pool (stable across httpx 0.28 / httpcore
+    1.0). ``verify`` stays at its secure default (certificate verification stays ON)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._pool._network_backend = _PinnedResolvingBackend()  # type: ignore[attr-defined]
 
 
 # Bound on manually-followed redirect hops (each one is re-validated by the SSRF guard).
@@ -93,8 +157,11 @@ async def fetch_website_text(
         # SSRF hardening (NFR-2): do NOT let httpx auto-follow redirects — a public homepage that
         # 302s to an internal address (169.254.169.254 metadata, 10.x, 127.0.0.1, link-local) would
         # be fetched unguarded. Follow manually in a bounded loop, re-running _is_safe_public_url on
-        # every hop's resolved Location and refusing (graceful empty) the first hop that fails.
+        # every hop's resolved Location and refusing (graceful empty) the first hop that fails. The
+        # _PinnedTransport additionally pins each connection to a re-validated public IP, so the
+        # address checked here is the exact address dialed (closes the DNS-rebinding window).
         async with httpx.AsyncClient(
+            transport=_PinnedTransport(),
             follow_redirects=False,
             timeout=timeout,
             headers={"User-Agent": "CaptureOS/0.1 (+https://captureos.app)"},
