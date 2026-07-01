@@ -83,3 +83,29 @@ async def apply_onboarding(
     }
     await session.flush()
     return profile
+
+
+def onboarding_brain_params(data: OnboardingRequest, *, fallback_name: str) -> dict:
+    """Map wizard answers → ``company_brain`` workflow ``input_params`` (BuildProfileRequest shape).
+
+    WS3 Stage-1 scaffold for the onboarding→enrichment seam. Today the route only runs the
+    deterministic ``apply_onboarding`` + a ``program_scan``; Stage 2 will additionally dispatch the
+    existing ``company_brain`` pipeline (``gather_company_sources`` → ``run_company_brain``) so the
+    profile is enriched from website + uploaded ``.md`` docs with sourced evidence *before* the
+    scan, while ``user_overrides`` precedence is preserved by ``run_company_brain._apply_profile``.
+
+    Pure and behavior-neutral: it is intentionally NOT wired into ``submit_onboarding`` yet. The
+    returned keys mirror the fields ``run_company_brain`` reads (name/website_url/industry/
+    location/description); ``document_ids`` is a placeholder — the brain's
+    ``gather_company_sources`` already pulls every org-scoped ingested chunk, so uploaded ``.md``
+    docs flow in automatically. ``website_url`` is ``None`` because the current wizard does not
+    capture it (a Stage-2 concern).
+    """
+    return {
+        "name": data.company_name or fallback_name or "Unknown Company",
+        "website_url": None,
+        "industry": data.industry,
+        "location": data.location,
+        "description": data.do_what,
+        "document_ids": None,
+    }

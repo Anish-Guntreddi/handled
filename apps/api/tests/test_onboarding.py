@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from httpx import AsyncClient
 
+from captureos.schemas.onboarding import OnboardingRequest
+from captureos.services.onboarding import onboarding_brain_params
 from tests.conftest import auth_headers, register
 
 
@@ -75,3 +77,30 @@ async def test_reonboarding_clears_and_retracts_stale_programs(client: AsyncClie
     assert "wosb" not in second  # set-aside retracted (cert cleared)
     assert "sbir" not in second  # R&D signal cleared
     assert "sba_7a" in second  # broadly-eligible loans still present
+
+
+def test_onboarding_brain_params_maps_wizard_to_company_brain() -> None:
+    """WS3 scaffold: the seam helper maps wizard answers to company_brain input_params."""
+    data = OnboardingRequest(
+        companyName="Acme Robotics",
+        doWhat="We build AI software for hospitals",
+        industry="software",
+        location="Austin, TX",
+        ownership=["woman_owned"],
+        activities=["rnd"],
+    )
+    params = onboarding_brain_params(data, fallback_name="Placeholder LLC")
+    assert params == {
+        "name": "Acme Robotics",
+        "website_url": None,
+        "industry": "software",
+        "location": "Austin, TX",
+        "description": "We build AI software for hospitals",
+        "document_ids": None,
+    }
+
+
+def test_onboarding_brain_params_falls_back_to_org_name() -> None:
+    """No company name in the wizard → the brain still gets a required name (org fallback)."""
+    params = onboarding_brain_params(OnboardingRequest(), fallback_name="Placeholder LLC")
+    assert params["name"] == "Placeholder LLC"
