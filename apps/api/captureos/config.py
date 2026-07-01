@@ -237,6 +237,22 @@ class Settings(BaseSettings):
     # URLs here (e.g. the current SBA SBIR/STTR Policy Directive PDF, NIST SP 800-171).
     corpus_pdf_extra_urls: str = ""
 
+    # ---- Corpus discovery agent (WS2 Knowledge Engine) ----
+    # The autonomous discovery agent watches SMB-compliance authorities/topics for change and
+    # proposes new fetch targets into the EXISTING adapters -> ingest_corpus_item pipeline. It is
+    # batch/cron-only (never in a user-request path). Built-in watch topics live in
+    # ``corpus/watchlist.py``; operators add free-text topics here (comma list) with no code change.
+    corpus_discovery_enabled: bool = False
+    corpus_discovery_extra_topics: str = ""
+    # Cost guard: one sweep is bounded by BOTH a token budget and a max target count. When either
+    # bound is hit, the remaining proposals are recorded as skipped (no silent truncation).
+    corpus_discovery_token_budget: int = 50_000
+    corpus_discovery_max_targets: int = 25
+
+    @property
+    def corpus_discovery_extra_topic_list(self) -> list[str]:
+        return [t.strip() for t in self.corpus_discovery_extra_topics.split(",") if t.strip()]
+
     @property
     def corpus_pdf_extra_url_list(self) -> list[str]:
         return [u.strip() for u in self.corpus_pdf_extra_urls.split(",") if u.strip()]

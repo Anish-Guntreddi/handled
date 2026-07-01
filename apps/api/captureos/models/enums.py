@@ -160,6 +160,21 @@ class CorpusAuthority(StrEnum):
     manual = "manual"
 
 
+class CorpusDiscoveryTrigger(StrEnum):
+    """How a corpus-discovery sweep was kicked off (platform op — never per-tenant)."""
+
+    scheduled = "scheduled"  # fired by the cron/`make corpus-sync` cadence
+    manual = "manual"  # an operator ran it by hand
+
+
+class CorpusDiscoveryRunStatus(StrEnum):
+    """Lifecycle of one bounded discovery sweep (for observability + provable currency)."""
+
+    running = "running"
+    succeeded = "succeeded"
+    failed = "failed"
+
+
 class CorpusDocType(StrEnum):
     regulation = "regulation"
     form = "form"
