@@ -15,6 +15,7 @@ from captureos.api import (
     documents,
     filings,
     forms,
+    guardrails,
     health,
     obligations,
     onboarding,
@@ -51,6 +52,10 @@ api_router.include_router(spend.router)
 # an HMAC-signed MockIssuing in local/CI), so — unlike the billing webhook — it is safe to mount
 # unconditionally: an unsigned/forged call is rejected, and the decision grants the caller nothing.
 api_router.include_router(spend_webhooks.router)
+# Spend Guardrails vertical (PRD §17) — a distinct compliance/policy feature that coexists with the
+# WS1 Stripe-Issuing spend guardrail above. Its own prefix (/orgs/{org_id}/guardrails) never
+# collides with /orgs/{org_id}/spend.
+api_router.include_router(guardrails.router)
 # The unauthenticated webhook is only mounted for a provider that signs its callbacks (Stripe).
 # In mock mode it is intentionally absent — mock upgrades go through the authenticated checkout,
 # so there is no unauthenticated route that could escalate an arbitrary org's plan.

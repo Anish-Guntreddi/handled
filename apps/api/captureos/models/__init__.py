@@ -23,6 +23,7 @@ from captureos.models.filings import (
     GeneratedDocument,
     Recommendation,
 )
+from captureos.models.guardrails import ConnectedAccount, PaymentEvent, SpendPolicy
 from captureos.models.jobs import WorkflowJob
 from captureos.models.obligations import Obligation
 from captureos.models.opportunities import Opportunity
@@ -72,4 +73,7 @@ __all__ = [
     "WorkflowRun",
     "WorkflowStep",
     "WorkflowJob",
+    "ConnectedAccount",
+    "SpendPolicy",
+    "PaymentEvent",
 ]
