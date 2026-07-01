@@ -2,7 +2,7 @@
 
 import { useState, type ButtonHTMLAttributes, type CSSProperties, type ReactNode } from "react";
 
-// Granted button. `primary` = solid green with dark on-green text (hover #38B074);
+// CaptureOS button. `primary` = solid green with dark on-green text (hover #38B074);
 // `secondary` = bordered surface chip (hover border brightens). Hover is handled
 // in JS so the design's exact hover colors are preserved without extra CSS.
 

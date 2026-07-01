@@ -45,7 +45,7 @@ export function SurfaceStub({
           Coming in the next phase
         </Eyebrow>
         <p style={{ margin: 0, color: "var(--gr-muted-3)", fontSize: 14.5, lineHeight: 1.6, maxWidth: 560 }}>
-          This surface is part of the Handled redesign and will be built on top of the shared
+          This surface is part of the CaptureOS redesign and will be built on top of the shared
           foundation in a later phase. The theme, shell, navigation, and reusable primitives are
           already in place.
         </p>

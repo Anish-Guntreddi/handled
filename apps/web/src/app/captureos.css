@@ -1,16 +1,16 @@
 /* ============================================================================
-   Granted design-system foundation
+   CaptureOS design-system foundation
    ----------------------------------------------------------------------------
-   The shared visual layer every Granted surface (Find / Copilot / Pursue /
+   The shared visual layer every CaptureOS surface (Find / Copilot / Pursue /
    Stay eligible / onboarding) builds on. Tokens are exposed as CSS variables
-   scoped to `.granted` so the new dark experience never bleeds into the
+   scoped to `.captureos` so the new dark experience never bleeds into the
    existing neutral CaptureOS routes (dashboard, login, orgs workspace).
 
-   Font variables (--font-granted-*) are provided by next/font in
-   src/lib/granted-fonts.ts and applied on the same `.granted` wrapper.
+   Font variables (--font-captureos-*) are provided by next/font in
+   src/lib/captureos-fonts.ts and applied on the same `.captureos` wrapper.
    ========================================================================== */
 
-.granted {
+.captureos {
   /* ---- Ink / surfaces ---- */
   --gr-bg: #16130e;
   --gr-surface: #211c15;
@@ -55,9 +55,9 @@
   --gr-radius-chip: 7px;
 
   /* ---- Fonts (variables from next/font) ---- */
-  --gr-font-serif: var(--font-granted-serif), "Instrument Serif", serif;
-  --gr-font-sans: var(--font-granted-sans), "Hanken Grotesk", system-ui, sans-serif;
-  --gr-font-mono: var(--font-granted-mono), "JetBrains Mono", ui-monospace, monospace;
+  --gr-font-serif: var(--font-captureos-serif), "Instrument Serif", serif;
+  --gr-font-sans: var(--font-captureos-sans), "Hanken Grotesk", system-ui, sans-serif;
+  --gr-font-mono: var(--font-captureos-mono), "JetBrains Mono", ui-monospace, monospace;
 
   background: var(--gr-bg);
   color: var(--gr-text);
@@ -66,7 +66,7 @@
   min-height: 100vh;
 }
 
-.granted ::placeholder {
+.captureos ::placeholder {
   color: var(--gr-placeholder);
 }
 

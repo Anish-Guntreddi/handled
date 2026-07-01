@@ -3,7 +3,7 @@
 import { useState, type CSSProperties } from "react";
 import Link from "next/link";
 
-import { GrantedLogo } from "./Logo";
+import { CaptureOSLogo } from "./Logo";
 
 // The four primary workspace tabs. Slugs map 1:1 to routes under
 // /orgs/[orgId]/workspace/<slug>.
@@ -133,7 +133,7 @@ const HEADER: CSSProperties = {
   borderBottom: "1px solid var(--gr-border-soft)",
 };
 
-export function GrantedHeader({
+export function CaptureOSHeader({
   orgId,
   activeTab,
   profilePct = 60,
@@ -159,7 +159,7 @@ export function GrantedHeader({
         }}
       >
         <Link href={`${base}/find`} style={{ textDecoration: "none" }}>
-          <GrantedLogo pro />
+          <CaptureOSLogo pro />
         </Link>
 
         <nav style={{ display: "flex", gap: 20, alignSelf: "stretch", alignItems: "center" }}>

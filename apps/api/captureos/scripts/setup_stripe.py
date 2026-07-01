@@ -92,7 +92,8 @@ def main() -> None:
             stripe.Product.modify(product.id, default_price=price.id)
             price_id, action = price.id, "created"
         env_lines.append(f"STRIPE_PRICE_{env_suffix}={price_id}")
-        print(f"  {action:>7}: {name}  ${amount_cents / 100:.0f}/mo  ->  {price_id}", file=sys.stderr)
+        summary = f"  {action:>7}: {name}  ${amount_cents / 100:.0f}/mo  ->  {price_id}"
+        print(summary, file=sys.stderr)
 
     print("\n# ---- paste these into .env ----")
     print("\n".join(env_lines))

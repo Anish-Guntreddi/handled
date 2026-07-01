@@ -48,7 +48,7 @@ export default function DashboardPage() {
     <main className="mx-auto max-w-3xl px-6 py-10">
       <header className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Handled</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">CaptureOS</h1>
           <p className="text-sm text-neutral-500">
             {me ? `Signed in as ${me.user.email}` : "Loading your account…"}
           </p>
@@ -122,7 +122,7 @@ export default function DashboardPage() {
         Open an organization to access the Company Brain, opportunity scanning, filings, audit,
         and billing.{" "}
         <Link href="/how-it-works" className="text-neutral-600 underline hover:text-neutral-900">
-          How Handled works
+          How CaptureOS works
         </Link>
         .
       </footer>

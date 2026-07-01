@@ -12,7 +12,7 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { Button, Card, EligibilityBadge, Eyebrow, Input } from "@/components/granted";
+import { Button, Card, EligibilityBadge, Eyebrow, Input } from "@/components/captureos";
 import { ApiError, apiFetch, pollWorkflowRun } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import type { Discovery, DiscoveryItem, Me, WorkflowRunCreated } from "@/lib/types";

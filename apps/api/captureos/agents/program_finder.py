@@ -49,7 +49,7 @@ def _decision(score: float) -> str:
 
 class ProgramFinderAgent(Agent[ProgramFinderInput, ProgramFinderOutput]):
     name = "program_finder"
-    tier = ModelTier.pro
+    tier = ModelTier.flash
     output_model = ProgramFinderOutput
     system_prompt = (
         "You are a small-business funding advisor. Given a company profile and a catalog of "

@@ -1,8 +1,8 @@
-// Granted logo: a green rounded square holding the rising-chart mark, next to
-// the "Granted" wordmark. The mark is reused at multiple sizes (header 28px,
+// CaptureOS logo: a green rounded square holding the rising-chart mark, next to
+// the "CaptureOS" wordmark. The mark is reused at multiple sizes (header 28px,
 // onboarding 30px, chat avatar 20px), so size is parameterized.
 
-export function GrantedMark({ size = 28 }: { size?: number }) {
+export function CaptureOSMark({ size = 28 }: { size?: number }) {
   const icon = Math.round(size * 0.57);
   return (
     <div
@@ -34,10 +34,10 @@ export function GrantedMark({ size = 28 }: { size?: number }) {
   );
 }
 
-export function GrantedWordmark({ size = 18 }: { size?: number }) {
+export function CaptureOSWordmark({ size = 18 }: { size?: number }) {
   return (
     <span style={{ fontWeight: 800, fontSize: size, letterSpacing: "-.02em", color: "var(--gr-heading)" }}>
-      Handled
+      CaptureOS
     </span>
   );
 }
@@ -67,7 +67,7 @@ export function ProPill() {
 }
 
 // Logo lockup: mark + wordmark (+ optional PRO pill).
-export function GrantedLogo({
+export function CaptureOSLogo({
   markSize = 28,
   wordmarkSize = 18,
   pro = false,
@@ -78,8 +78,8 @@ export function GrantedLogo({
 }) {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
-      <GrantedMark size={markSize} />
-      <GrantedWordmark size={wordmarkSize} />
+      <CaptureOSMark size={markSize} />
+      <CaptureOSWordmark size={wordmarkSize} />
       {pro && <ProPill />}
     </div>
   );

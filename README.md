@@ -1,10 +1,10 @@
-# Handled
+# CaptureOS
 
-**Your government paperwork, Handled.**
+**Your government paperwork, captured.**
 
-Handled is an AI platform that handles government **compliance** for small businesses — so owners get their time back to build their business, and find the **money they're owed** along the way.
+CaptureOS is an AI platform that handles government **compliance** for small businesses — so owners get their time back to build their business, and find the **money they're owed** along the way.
 
-The US government gives hundreds of billions a year to small businesses (federal contracts, grants, SBA loans, SBIR/STTR, R&D & hiring tax credits, set-aside advantages) — but it's scattered across a dozen portals, buried in the FAR/CFR, and gated by paperwork most owners can't afford a consultant to navigate. Handled turns that maze into a fast, friendly, **cited, human-approved** workflow.
+The US government gives hundreds of billions a year to small businesses (federal contracts, grants, SBA loans, SBIR/STTR, R&D & hiring tax credits, set-aside advantages) — but it's scattered across a dozen portals, buried in the FAR/CFR, and gated by paperwork most owners can't afford a consultant to navigate. CaptureOS turns that maze into a fast, friendly, **cited, human-approved** workflow.
 
 > **Wedge vs. moat:** "find the money" is the acquisition hook; **automating the recurring compliance paperwork is the moat** — it's painful, perpetual, sticky, and defensible (a grounded regulatory corpus + structured, auditable workflows). Every recommendation is cited to its source, and **nothing is ever auto-submitted** — a human always approves.
 
@@ -29,13 +29,13 @@ The US government gives hundreds of billions a year to small businesses (federal
 
 ```
 apps/api/   FastAPI backend — agents, workflows, corpus/RAG, endpoints, tests
-apps/web/   Next.js frontend — the Handled app
+apps/web/   Next.js frontend — the CaptureOS app
 docs/       architecture, roadmaps, and strategy notes
 ```
 
 ## Run it locally (no API key required)
 
-Handled runs end-to-end on **deterministic mock** with no keys — perfect for a first test.
+CaptureOS runs end-to-end on **deterministic mock** with no keys — perfect for a first test.
 
 ```bash
 make db-up && make migrate     # Postgres + pgvector, schema to head
@@ -60,7 +60,7 @@ Now the Copilot and grounding cite real regulation text. Check `GET /corpus/stat
 
 ## Guarantees (non-negotiable)
 
-- **Never auto-submit** — Handled prepares packages; a human files them.
+- **Never auto-submit** — CaptureOS prepares packages; a human files them.
 - **Every claim cited** — answers and recommendations are grounded in retrieved sources.
 - **Everything audited** — a complete, exportable audit trail.
 - **Secrets server-side only** · **strict org isolation** (multi-tenant data never crosses orgs; the shared corpus carries no tenant data).
@@ -70,4 +70,4 @@ Now the Copilot and grounding cite real regulation text. Check `GET /corpus/stat
 MVP — all surfaces built, wired to real endpoints, and **green** (API test suite passing, web build clean). Runs on mock today; add keys for live reasoning and cited regulation text.
 
 ---
-*AI-assisted, human-approved. Handled prepares packages — it never submits them.*
+*AI-assisted, human-approved. CaptureOS prepares packages — it never submits them.*

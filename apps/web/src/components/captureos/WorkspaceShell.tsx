@@ -5,7 +5,7 @@ import { useParams, usePathname, useRouter } from "next/navigation";
 
 import { useAuth } from "@/lib/auth";
 
-import { GrantedHeader, type WorkspaceTab } from "./Header";
+import { CaptureOSHeader, type WorkspaceTab } from "./Header";
 
 // Derives the active workspace tab from the current pathname so the header can
 // highlight it. Defaults to "find" (the workspace landing surface).
@@ -16,7 +16,7 @@ function activeTabFromPath(pathname: string): WorkspaceTab {
   return "find";
 }
 
-// Client shell for the Granted workspace: auth-gates the surface (matching the
+// Client shell for the CaptureOS workspace: auth-gates the surface (matching the
 // existing orgs/[orgId] pattern), renders the sticky header, and lays out the
 // max-width 1160px content column. The theme class + font variables are applied
 // by the workspace layout that wraps this.
@@ -41,7 +41,7 @@ export function WorkspaceShell({ children }: { children: ReactNode }) {
 
   return (
     <>
-      <GrantedHeader orgId={orgId} activeTab={activeTabFromPath(pathname)} />
+      <CaptureOSHeader orgId={orgId} activeTab={activeTabFromPath(pathname)} />
       <main style={{ maxWidth: 1160, margin: "0 auto", padding: "0 28px 90px" }}>{children}</main>
     </>
   );

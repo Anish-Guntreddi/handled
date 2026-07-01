@@ -7,7 +7,7 @@ import {
   type TextareaHTMLAttributes,
 } from "react";
 
-// Granted text inputs. On focus they take the green ring from the design
+// CaptureOS text inputs. On focus they take the green ring from the design
 // (border #2E9E66 + 3px green glow). Shared style between Input and Textarea.
 
 const FIELD_BASE: CSSProperties = {

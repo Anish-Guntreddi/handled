@@ -81,7 +81,8 @@ async def main() -> int:
             temperature=0.0,
         )
         text = (resp.text or "").strip()
-        ok("LLM responded", f"model={resp.model} text={text!r} tokens in/out={resp.input_tokens}/{resp.output_tokens}")
+        detail = f"model={resp.model} text={text!r} in/out={resp.input_tokens}/{resp.output_tokens}"
+        ok("LLM responded", detail)
     except Exception as exc:  # noqa: BLE001
         failures += 1
         bad("LLM call failed", f"{type(exc).__name__}: {exc}")

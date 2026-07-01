@@ -4,7 +4,7 @@ import { Suspense, useMemo, useState, type CSSProperties } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { Eyebrow } from "@/components/granted";
+import { Eyebrow } from "@/components/captureos";
 import { ApiError, apiDownload, apiFetch, errorMessage } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import type {
@@ -16,7 +16,7 @@ import type {
   RecommendationDetail,
 } from "@/lib/types";
 
-// Pursue — the pipeline of filings being worked, restyled into the Granted theme.
+// Pursue — the pipeline of filings being worked, restyled into the CaptureOS theme.
 // LIST: GET /orgs/{orgId}/filings joined with GET /orgs/{orgId}/opportunities for
 //   each card's name + funder. Status drives a 6-step progress bar and a stage
 //   badge (draft → requirements → evidence → recommend → package → ready).
@@ -749,7 +749,7 @@ function RecommendationPanel({
         }}
       >
         <RecommendIcon />
-        Handled&rsquo;s recommendation
+        CaptureOS&rsquo;s recommendation
       </div>
 
       <div
@@ -783,7 +783,7 @@ function RecommendationPanel({
         </p>
       ) : (
         <p style={{ margin: "0 0 18px", color: "#c8e3cf", fontSize: 15, lineHeight: 1.6, maxWidth: 780 }}>
-          Run the recommendation step to see Handled&rsquo;s cited verdict on whether this filing is worth
+          Run the recommendation step to see CaptureOS&rsquo;s cited verdict on whether this filing is worth
           pursuing.
         </p>
       )}
@@ -850,7 +850,7 @@ function RecommendationPanel({
                 : "Approve this recommendation"}
           </div>
           <div style={{ fontSize: 12.5, color: "var(--gr-money-text)", marginTop: 1 }}>
-            Handled never submits anything to the government without your approval.
+            CaptureOS never submits anything to the government without your approval.
           </div>
         </div>
       </div>
@@ -1014,7 +1014,7 @@ function EmptyPipeline({ orgId }: { orgId: string }) {
         Nothing in your pipeline yet
       </div>
       <p style={{ color: "var(--gr-muted-3)", fontSize: 14, margin: "0 0 18px" }}>
-        Start one from Find — pick an opportunity you qualify for and Handled opens a filing here.
+        Start one from Find — pick an opportunity you qualify for and CaptureOS opens a filing here.
       </p>
       <button
         type="button"

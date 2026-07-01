@@ -1,6 +1,6 @@
 import type { CSSProperties, ReactNode } from "react";
 
-// Surface card — the standard 14px-radius panel used across every Granted
+// Surface card — the standard 14px-radius panel used across every CaptureOS
 // surface. `tone="money"` swaps to the green "money" palette (bg #10402B).
 export function Card({
   children,
