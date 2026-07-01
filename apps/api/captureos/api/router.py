@@ -21,6 +21,8 @@ from captureos.api import (
     opportunities,
     orgs,
     programs,
+    spend,
+    spend_webhooks,
     workflows,
 )
 from captureos.config import BillingProviderName, get_settings
@@ -44,6 +46,11 @@ api_router.include_router(forms.router)
 api_router.include_router(corpus.router)
 api_router.include_router(audit.router)
 api_router.include_router(billing.router)
+api_router.include_router(spend.router)
+# The real-time Issuing authorization webhook is verified by provider signature (Stripe in prod,
+# an HMAC-signed MockIssuing in local/CI), so — unlike the billing webhook — it is safe to mount
+# unconditionally: an unsigned/forged call is rejected, and the decision grants the caller nothing.
+api_router.include_router(spend_webhooks.router)
 # The unauthenticated webhook is only mounted for a provider that signs its callbacks (Stripe).
 # In mock mode it is intentionally absent — mock upgrades go through the authenticated checkout,
 # so there is no unauthenticated route that could escalate an arbitrary org's plan.

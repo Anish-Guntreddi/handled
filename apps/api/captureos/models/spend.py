@@ -26,6 +26,8 @@ from captureos.models.enums import (
     SpendBudgetSource,
     SpendDecision,
     SpendInterval,
+    SpendRuleKind,
+    SpendRuleMatch,
 )
 
 _EMPTY_OBJ = text("'{}'::jsonb")
@@ -43,6 +45,8 @@ class Cardholder(UUIDPKMixin, OrgScopedMixin, TimestampMixin, Base):
     )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     email: Mapped[str | None] = mapped_column(String(320), nullable=True)
+    # E.164 phone the spend-guardrail decline SMS is sent to (the owner/cardholder). Never a secret.
+    phone: Mapped[str | None] = mapped_column(String(32), nullable=True)
     status: Mapped[str] = mapped_column(
         String(16), nullable=False, default=CardholderStatus.active.value
     )
@@ -123,7 +127,38 @@ class SpendAuthorization(UUIDPKMixin, OrgScopedMixin, TimestampMixin, Base):
     amount_cents: Mapped[int] = mapped_column(Integer, nullable=False)
     merchant: Mapped[str | None] = mapped_column(String(255), nullable=True)
     mcc: Mapped[str | None] = mapped_column(String(4), nullable=True)
+    # Human merchant category (Stripe merchant_data.category), stored so the hot path can total
+    # spend against a category-scoped SpendBudget in the interval window.
+    category: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     decision: Mapped[str] = mapped_column(
         String(16), nullable=False, default=SpendDecision.declined.value
+    )
+    reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class SpendMerchantRule(UUIDPKMixin, OrgScopedMixin, TimestampMixin, Base):
+    """A precomputed allow/deny rule the deterministic hot path reads.
+
+    The cold-path budget-rule translator (flash agent) materializes these from the natural-language
+    budget + a relevance judgment vs the ``CompanyProfile``: an ``allow`` list of merchants/MCCs/
+    categories the card may transact with, and a ``deny`` list of clearly-irrelevant ones. The hot
+    path never calls an LLM — it only reads these rows.
+    """
+
+    __tablename__ = "spend_merchant_rules"
+    # One rule per (org, kind, match dimension, value) — re-translation upserts, never duplicates.
+    __table_args__ = (
+        UniqueConstraint("org_id", "kind", "match_type", "match_value"),
+    )
+
+    kind: Mapped[str] = mapped_column(
+        String(8), nullable=False, default=SpendRuleKind.allow.value, index=True
+    )
+    match_type: Mapped[str] = mapped_column(
+        String(16), nullable=False, default=SpendRuleMatch.category.value
+    )
+    match_value: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    source: Mapped[str] = mapped_column(
+        String(8), nullable=False, default=SpendBudgetSource.nl.value
     )
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
