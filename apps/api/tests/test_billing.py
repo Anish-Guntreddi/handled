@@ -10,6 +10,7 @@ import uuid
 import pytest
 from httpx import AsyncClient
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from captureos.core.errors import PaymentRequiredError
 from captureos.db.session import session_scope
@@ -364,6 +365,50 @@ async def test_concurrent_checkout_double_delivery_is_clean_noop(client: AsyncCl
             )
         ).scalars().all()
         assert len(revenue) == 1  # no double-charge
+
+
+async def test_concurrent_entitlement_race_reraises_not_silent_drop(client: AsyncClient) -> None:
+    # MONEY: if a concurrent DIFFERENT event for the same first-time purchase (e.g.
+    # customer.subscription.created) wins the race to insert this org's Entitlement, the checkout
+    # flush hits the Entitlement.org_id unique constraint — NOT the duplicate-revenue one. That must
+    # NOT be swallowed as a no-op (which would drop the new RevenueRecord and suppress the Stripe
+    # retry); it must re-raise so the webhook 500s and Stripe retries, capturing the revenue.
+    from captureos.db.session import get_sessionmaker
+    from captureos.services.billing import _upsert_entitlement
+
+    _headers, org_id = await _setup(client, "co-entrace@example.com")
+    org_uuid = uuid.UUID(org_id)
+    event = _checkout_event(org_id=org_id, external_id="sess_entrace_1")
+
+    sessionmaker = get_sessionmaker()
+    async with sessionmaker() as loser:
+        # Pin the loser's snapshot BEFORE any entitlement exists (REPEATABLE READ + a first read).
+        await loser.connection(execution_options={"isolation_level": "REPEATABLE READ"})
+        await loser.execute(select(Entitlement.id).limit(1))
+
+        # A concurrent event creates + commits this org's entitlement (no revenue for our id).
+        async with session_scope() as other:
+            await _upsert_entitlement(
+                other,
+                org_uuid,
+                status=EntitlementStatus.active.value,
+                tier=EntitlementTier.sprint.value,
+                stripe_subscription_id="sub_entrace",
+            )
+
+        # The checkout's flush now conflicts on Entitlement.org_id (the loser's snapshot never saw
+        # it) and there is NO RevenueRecord for this external_id → the guard must re-raise.
+        with pytest.raises(IntegrityError):
+            await apply_webhook(loser, dict(event))
+
+    # No revenue was recorded for this delivery — it will be captured on the Stripe retry.
+    async with session_scope() as session:
+        revenue = (
+            await session.execute(
+                select(RevenueRecord).where(RevenueRecord.external_id == "sess_entrace_1")
+            )
+        ).scalars().all()
+        assert revenue == []
 
 
 async def test_unresolvable_subscription_event_is_noop(client: AsyncClient) -> None:
