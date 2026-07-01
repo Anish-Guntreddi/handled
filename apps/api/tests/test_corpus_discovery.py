@@ -10,10 +10,14 @@ from captureos.agents.corpus_discovery import (
     KIND_FEDERAL_REGISTER,
     VERDICT_DUPLICATE,
     VERDICT_NEW,
+    CorpusDiscoveryAgent,
     CorpusIndexEntry,
+    CorpusTriageAgent,
     DiscoveryProposals,
     FederalRegisterSignal,
     ProposedTarget,
+    TriageHit,
+    TriageOutput,
 )
 from captureos.config import Settings
 from captureos.corpus.ingest import CorpusItem, ingest_corpus_item
@@ -26,6 +30,7 @@ from captureos.providers.llm import MockLLM
 from captureos.services import corpus_discovery as svc
 from captureos.services.corpus_discovery import (
     DiscoveryOutcome,
+    DiscoveryPlan,
     finalize_discovery_run,
     gather_corpus_index,
     is_allowlisted_https,
@@ -166,9 +171,10 @@ async def test_plan_discovery_proposes_new_dedupes_existing_and_ignores_unrelate
 
     async with session_scope() as session:
         corpus_index = await gather_corpus_index(session)
-        proposals, tokens = await plan_discovery(
+        plan = await plan_discovery(
             session, settings=settings, entries=entries, corpus_index=corpus_index
         )
+    proposals, tokens = plan.proposals, plan.tokens
 
     fr_targets = {
         t.external_id: t for t in proposals.targets if t.kind == KIND_FEDERAL_REGISTER
@@ -209,11 +215,60 @@ def test_select_fetchable_targets_dedupes_and_bounds_without_silent_truncation()
             for i in range(4)
         ],
     ]
-    selection = select_fetchable_targets(DiscoveryProposals(targets=targets), max_targets=2)
-    assert selection.duplicate_count == 1  # dedupe drops the duplicate before fetch
+    # The index CONFIRMS the duplicate is present-and-current, so dropping it is deterministically
+    # safe (not a blind trust of the agent's verdict).
+    corpus_index = [
+        CorpusIndexEntry(authority=KIND_FEDERAL_REGISTER, external_id="dup", citation="dup")
+    ]
+    selection = select_fetchable_targets(
+        DiscoveryProposals(targets=targets), max_targets=2, corpus_index=corpus_index
+    )
+    assert selection.duplicate_count == 1  # dedupe drops the (verified) duplicate before fetch
+    assert selection.duplicate_ids == ["dup"]  # which doc was deduped is recorded, not just a count
     assert len(selection.accepted) == 2  # bounded sweep
     assert selection.skipped_count == 2  # the remaining fetchable targets are recorded, not dropped
     assert selection.skipped_reason == "max_targets_budget"
+
+
+def test_hallucinated_duplicate_not_in_index_is_not_dropped() -> None:
+    """ISSUE-1 backstop (the moat's worst failure): an LLM ``duplicate`` verdict on a target the
+    corpus index does NOT hold as current must NOT be dropped — dropping it would silently miss a
+    genuine regulatory update. It is kept fetchable; only a verdict the index CONFIRMS is deduped.
+    """
+    hallucinated = ProposedTarget(
+        kind=KIND_FEDERAL_REGISTER,
+        authority=KIND_FEDERAL_REGISTER,
+        external_id="2024-CHANGED",  # model says 'duplicate' but the corpus doesn't have it current
+        reason="model wrongly thinks it's a dup",
+        confidence=0.8,
+        dedupe_verdict=VERDICT_DUPLICATE,
+    )
+    verified = ProposedTarget(
+        kind=KIND_FEDERAL_REGISTER,
+        authority=KIND_FEDERAL_REGISTER,
+        external_id="2024-PRESENT",  # genuinely already current in the corpus
+        reason="genuinely already current",
+        confidence=0.8,
+        dedupe_verdict=VERDICT_DUPLICATE,
+    )
+    corpus_index = [
+        CorpusIndexEntry(
+            authority=KIND_FEDERAL_REGISTER, external_id="2024-PRESENT", citation="2024-PRESENT"
+        )
+    ]
+    selection = select_fetchable_targets(
+        DiscoveryProposals(targets=[hallucinated, verified]),
+        max_targets=25,
+        corpus_index=corpus_index,
+    )
+    accepted_ids = {t.external_id for t in selection.accepted}
+    # The hallucinated duplicate SURVIVES as fetchable (ingest's hash diff will decide its fate).
+    assert "2024-CHANGED" in accepted_ids
+    # Only the index-confirmed duplicate is deduped.
+    assert "2024-PRESENT" not in accepted_ids
+    assert selection.duplicate_count == 1
+    assert selection.duplicate_ids == ["2024-PRESENT"]
+    assert selection.skipped_count == 0
 
 
 def test_no_bound_no_skip() -> None:
@@ -227,7 +282,9 @@ def test_no_bound_no_skip() -> None:
             dedupe_verdict=VERDICT_NEW,
         )
     ]
-    selection = select_fetchable_targets(DiscoveryProposals(targets=targets), max_targets=25)
+    selection = select_fetchable_targets(
+        DiscoveryProposals(targets=targets), max_targets=25, corpus_index=[]
+    )
     assert selection.skipped_count == 0
     assert selection.skipped_reason is None
 
@@ -296,12 +353,15 @@ async def test_seeded_new_final_rule_dedupes_then_ingests_created_updated_unchan
 
     async with session_scope() as session:
         corpus_index = await gather_corpus_index(session)
-        proposals, _ = await plan_discovery(
+        plan = await plan_discovery(
             session, settings=settings, entries=entries, corpus_index=corpus_index
         )
+    proposals = plan.proposals
 
     selection = select_fetchable_targets(
-        proposals, max_targets=settings.corpus_discovery_max_targets
+        proposals,
+        max_targets=settings.corpus_discovery_max_targets,
+        corpus_index=corpus_index,
     )
     accepted_fr = {t.external_id for t in selection.accepted if t.kind == KIND_FEDERAL_REGISTER}
 
@@ -378,3 +438,102 @@ async def test_discovery_index_reflects_only_current_docs() -> None:
         e.authority == KIND_FEDERAL_REGISTER and e.external_id == "2023-IDX" for e in index
     )
     assert all(isinstance(e, CorpusIndexEntry) for e in index)
+
+
+# --- Cost guard bounds the ACTUAL LLM sweep, not just the downstream fetch (ISSUE-3) ----------
+
+
+async def test_token_budget_short_circuits_the_discovery_lane(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The token budget must bound the LLM spend, not merely gate fetching. If the cheap triage
+    lane ALONE spends the budget, the pricier discovery lane must NOT run, and the unexpanded
+    triaged signals are recorded as skipped (no silent truncation)."""
+    settings = Settings(corpus_discovery_token_budget=5_000)
+
+    async def fake_triage_run(
+        self: CorpusTriageAgent, ctx: object, data: object
+    ) -> TriageOutput:
+        # Simulate the triage lane burning the whole budget by itself.
+        self.last_input_tokens = 6_000
+        self.last_output_tokens = 0
+        return TriageOutput(
+            hits=[
+                TriageHit(
+                    external_id="2024-X",
+                    matched_topic_key="set_asides",
+                    reason="match",
+                    confidence=0.9,
+                )
+            ]
+        )
+
+    discovery_ran = {"called": False}
+
+    async def fake_discovery_run(
+        self: CorpusDiscoveryAgent, ctx: object, data: object
+    ) -> DiscoveryProposals:
+        discovery_ran["called"] = True  # must NEVER flip — that is the whole point of the bound
+        return DiscoveryProposals(targets=[])
+
+    monkeypatch.setattr(CorpusTriageAgent, "run", fake_triage_run)
+    monkeypatch.setattr(CorpusDiscoveryAgent, "run", fake_discovery_run)
+
+    entries = [_fr_signal("2024-X", "WOSB set-aside amendment", "set-aside rule")]
+    async with session_scope() as session:
+        plan = await plan_discovery(
+            session, settings=settings, entries=entries, corpus_index=[]
+        )
+
+    assert isinstance(plan, DiscoveryPlan)
+    # The expensive discovery lane never ran (spend is bounded, not just the fetch).
+    assert discovery_ran["called"] is False
+    assert plan.proposals.targets == []
+    assert plan.tokens == 6_000
+    assert plan.skipped_signals == 1
+    assert plan.skipped_reason == "token_budget_exhausted"
+
+
+async def test_under_budget_runs_both_lanes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Control for the short-circuit: when triage stays under budget, the discovery lane DOES run
+    (the bound only fires when the budget is actually exhausted)."""
+    settings = Settings(corpus_discovery_token_budget=50_000)
+
+    async def fake_triage_run(
+        self: CorpusTriageAgent, ctx: object, data: object
+    ) -> TriageOutput:
+        self.last_input_tokens = 100
+        self.last_output_tokens = 0
+        return TriageOutput(
+            hits=[
+                TriageHit(
+                    external_id="2024-X",
+                    matched_topic_key="set_asides",
+                    reason="match",
+                    confidence=0.9,
+                )
+            ]
+        )
+
+    discovery_ran = {"called": False}
+
+    async def fake_discovery_run(
+        self: CorpusDiscoveryAgent, ctx: object, data: object
+    ) -> DiscoveryProposals:
+        discovery_ran["called"] = True
+        self.last_input_tokens = 200
+        self.last_output_tokens = 0
+        return DiscoveryProposals(targets=[])
+
+    monkeypatch.setattr(CorpusTriageAgent, "run", fake_triage_run)
+    monkeypatch.setattr(CorpusDiscoveryAgent, "run", fake_discovery_run)
+
+    entries = [_fr_signal("2024-X", "WOSB set-aside amendment", "set-aside rule")]
+    async with session_scope() as session:
+        plan = await plan_discovery(
+            session, settings=settings, entries=entries, corpus_index=[]
+        )
+
+    assert discovery_ran["called"] is True
+    assert plan.skipped_reason is None
+    assert plan.tokens == 300  # both lanes counted
