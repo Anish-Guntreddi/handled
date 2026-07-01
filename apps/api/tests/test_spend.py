@@ -152,6 +152,16 @@ async def test_over_budget_charge_declined_and_sms_sent(client: AsyncClient) -> 
     assert card["last4"] in sms[0].body  # last4 is allowed; full PAN is not
     assert "CVC" not in sms[0].body.upper()
 
+    # A declined SpendAuthorization audit row is persisted for the off-budget swipe.
+    auths = (
+        await client.get(f"/api/v1/orgs/{org_id}/spend/authorizations", headers=headers)
+    ).json()
+    declined = [a for a in auths if a["stripeAuthId"] == "iauth_over_1"]
+    assert len(declined) == 1
+    assert declined[0]["decision"] == "declined"
+    assert declined[0]["reason"] == "over_budget"
+    assert declined[0]["amountCents"] == 70000
+
 
 # --------------------------------------------------------------------------- hot path: off-budget
 async def test_novel_offbudget_charge_declined(client: AsyncClient) -> None:
@@ -166,6 +176,19 @@ async def test_novel_offbudget_charge_declined(client: AsyncClient) -> None:
     resp = await _post_issuing(client, body)
     assert resp.json()["approved"] is False
     assert resp.json()["reason"] in ("not_allowlisted", "no_budget_rule")
+
+    # A declined SpendAuthorization row is written AND the owner is escalated by SMS (no PAN).
+    auths = (
+        await client.get(f"/api/v1/orgs/{org_id}/spend/authorizations", headers=headers)
+    ).json()
+    novel = [a for a in auths if a["stripeAuthId"] == "iauth_novel_1"]
+    assert len(novel) == 1
+    assert novel[0]["decision"] == "declined"
+
+    sms = [m for m in get_notifier().outbox if m.channel == "sms"]  # type: ignore[attr-defined]
+    assert len(sms) == 1
+    assert sms[0].to == "+15550003333"
+    assert "CVC" not in sms[0].body.upper()
 
 
 # --------------------------------------------------------------------------- deny list
