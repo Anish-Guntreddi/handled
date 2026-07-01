@@ -15,10 +15,28 @@
 - ✅ **done** — `OpportunityResearchAgent` downgraded to **flash** (bulk agency/prior-award research); `FitScoringAgent` in the same module stays **pro** for the bid/no-bid judgment.
 - **Vertex provider swap** — deferred with deployment; flip `GEMINI_BACKEND=vertex` (ADC on `captureos-prod`) before production. (`ModelTier.bulk` was added in WS2.)
 
-## Deployment (deferred per project decision — localhost-first)
-- Cloud Scheduler → Cloud Run Job for the corpus cron (local stand-in today: `make corpus-schedule` / `corpus-sync`).
-- AlloyDB (pgvector + ScaNN), GCS, Pub/Sub, Secret Manager, Cloud Run — provision via Terraform at deploy.
-- Stripe live-mode + real business entity for Issuing interchange; Twilio production number.
+## Deployment topology (deferred — localhost-first, keep it FREE until deploy)
+
+**Cost guardrail — nothing bills during local testing.** Everything runs on free/local tiers: local Docker Postgres (`pgvector/pgvector:pg16`), Gemini AI Studio free key, Stripe **sandbox**, local/mock providers. The GCP project `captureos-prod` is provisioned but **incurs $0** — enabled APIs + ADC are free; no paid resource is running. **Do NOT provision paid GCP resources (AlloyDB instance, Cloud Run, etc.) until an actual deploy.**
+
+**Local → production is an env swap, not a rewrite** (the provider-seam / local-first, cloud-ready design). The Postgres Docker container is a dev convenience — it is **not** shipped; production uses a **managed Postgres**.
+
+| Piece | Local (free) | Production |
+|---|---|---|
+| Database | Docker `pgvector/pgvector:pg16` | **managed Postgres** — swap `DATABASE_URL` (cost note below) |
+| API + worker | `make api` / worker | containerize → **Cloud Run** (the prod container is the *app*, not the DB) |
+| Frontend | `make web` | Cloud Run or Vercel |
+| Gemini | AI Studio free key | Vertex AI (`GEMINI_BACKEND=vertex`, ADC) |
+| Storage / queue / cron | local providers | GCS / Pub/Sub / Cloud Scheduler → Run Job |
+| Secrets | `.env` | Secret Manager |
+
+**Managed-Postgres cost tradeoff (decide at deploy — all pgvector-capable):**
+- **Cloud SQL for Postgres** — cheapest simple managed Postgres on GCP. Best lean start.
+- **Neon** — serverless Postgres, scales to zero; cheapest at low/spiky traffic (Neon MCP already connected).
+- **AlloyDB** — vector-optimized (pgvector + ScaNN), premium price. Move here when RAG/vector scale demands it.
+- **Recommendation: launch lean on Cloud SQL or Neon, upgrade to AlloyDB later** — just a `DATABASE_URL` swap + `alembic upgrade head` + `corpus.sync`/`embed`.
+
+**Deploy checklist (later):** provision managed Postgres → point `DATABASE_URL` → migrate → containerize API/worker → Cloud Run → Cloud Scheduler for the corpus cron → Vertex + Secret Manager + GCS/Pub/Sub → Stripe live + business entity for Issuing → Twilio prod number.
 
 ## Not yet built
 - **WS5 — Custom RAG** (hybrid retrieval, structure-aware chunking, temporal, re-rank, eval harness). Deferred/research-gated; opens with the embedding-analysis spike. See `docs/prd/ws5-custom-rag.md`.
