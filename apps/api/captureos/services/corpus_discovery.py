@@ -222,19 +222,38 @@ async def gather_corpus_index(session: AsyncSession) -> list[CorpusIndexEntry]:
     ]
 
 
+@dataclass(slots=True)
+class DiscoveryPlan:
+    """One LLM planning sweep's result: the deduped proposals, the tokens the two lanes burned,
+    and — if the token budget short-circuited the sweep BETWEEN lanes — how many triaged signals
+    were left unexpanded (recorded as skipped, never silently truncated)."""
+
+    proposals: DiscoveryProposals
+    tokens: int
+    skipped_signals: int = 0
+    skipped_reason: str | None = None
+
+
 async def plan_discovery(
     session: AsyncSession,
     *,
     settings: Settings,
     entries: list[FederalRegisterSignal],
     corpus_index: list[CorpusIndexEntry],
-) -> tuple[DiscoveryProposals, int]:
-    """Run triage (bulk) → discovery (flash) and return proposals + total tokens burned.
+) -> DiscoveryPlan:
+    """Run triage (bulk) → discovery (flash) and return the proposals + tokens burned.
+
+    Cost bound (WS2): the discovery lane is the pricier judgment pass, so if the cheap triage lane
+    ALONE already spent the token budget, we DO NOT run discovery — we short-circuit and record how
+    many triaged signals were left unexpanded. This bounds the ACTUAL LLM spend, not merely the
+    downstream fetch: the token budget used to be purely post-hoc (both lanes ran to completion
+    before it was ever consulted, so it never bounded the spend it nominally caps).
 
     Org-less (``AgentContext(org_id=None)``): no tenant data touches this path. Deterministic
-    offline under ``LLM_PROVIDER=mock`` (each agent's ``mock_output``)."""
+    offline under ``LLM_PROVIDER=mock`` (tokens are 0, so the short-circuit never fires)."""
     topics = _watchlist_views(settings)
     ctx = AgentContext(session=session, org_id=None)
+    budget = settings.corpus_discovery_token_budget
 
     triage = CorpusTriageAgent()
     triaged = await triage.run(ctx, TriageInput(entries=entries, topics=topics))
@@ -251,13 +270,29 @@ async def plan_discovery(
         if entry.external_id in hit_by_id
     ]
 
+    # Between-lane cost guard: triage already burned the budget → skip the pricier discovery lane
+    # entirely (no silent truncation — the unexpanded signals are reported so the run records them).
+    if budget and tokens >= budget and signals:
+        logger.warning(
+            "corpus.discovery_budget_short_circuit",
+            tokens=tokens,
+            token_budget=budget,
+            skipped_signals=len(signals),
+        )
+        return DiscoveryPlan(
+            proposals=DiscoveryProposals(targets=[]),
+            tokens=tokens,
+            skipped_signals=len(signals),
+            skipped_reason="token_budget_exhausted",
+        )
+
     discovery = CorpusDiscoveryAgent()
     proposals = await discovery.run(
         ctx,
         DiscoveryAgentInput(signals=signals, topics=topics, corpus_index=corpus_index),
     )
     tokens += discovery.last_input_tokens + discovery.last_output_tokens
-    return proposals, tokens
+    return DiscoveryPlan(proposals=proposals, tokens=tokens)
 
 
 def is_allowlisted_https(url: str | None) -> bool:
@@ -281,25 +316,47 @@ async def resolve_fetch_url(url: str | None) -> bool:
 @dataclass(slots=True)
 class TargetSelection:
     accepted: list[ProposedTarget]
-    duplicate_count: int  # proposals the corpus already has current (deduped, not fetched)
+    duplicate_count: int  # proposals the index VERIFIABLY has current (deduped, not fetched)
+    duplicate_ids: list[str]  # which docs were genuinely deduped (audit, not just an aggregate)
     skipped_count: int  # fetchable proposals dropped by the max-target bound (NOT silent)
     skipped_reason: str | None
 
 
 def select_fetchable_targets(
-    proposals: DiscoveryProposals, *, max_targets: int
+    proposals: DiscoveryProposals,
+    *,
+    max_targets: int,
+    corpus_index: list[CorpusIndexEntry],
 ) -> TargetSelection:
-    """Dedupe (drop ``duplicate`` verdicts) then apply the max-target cost bound.
+    """Dedupe, then apply the max-target cost bound.
+
+    Dedupe is DETERMINISTIC — it does not blindly trust the agent's ``dedupe_verdict``. A target
+    is dropped as a duplicate ONLY when the corpus index actually holds its ``(authority,
+    external_id)`` as current. A ``duplicate`` verdict the index cannot confirm is NOT dropped: a
+    hallucinated ``duplicate`` on a genuinely-changed rule would be a silently MISSED regulatory
+    update (the moat's worst failure), so instead it is treated as fetchable and the content-hash
+    diff in ``ingest_corpus_item`` (the deterministic engine, not the LLM) makes the final created/
+    updated/unchanged call. This mirrors the false-``new`` backstop (a wrong ``new`` is likewise
+    caught by the same diff, which returns ``unchanged``), so neither hallucinated verdict can
+    silently miss a change.
 
     Any fetchable proposal beyond ``max_targets`` is recorded as skipped with a reason — a bounded
     sweep never silently truncates (WS-QA "no silent truncation")."""
-    duplicate_count = sum(1 for t in proposals.targets if t.dedupe_verdict == VERDICT_DUPLICATE)
-    fetchable = [t for t in proposals.targets if t.dedupe_verdict != VERDICT_DUPLICATE]
+    # The index is projected from is_current docs only, so membership == present-and-current.
+    current_keys = {(e.authority, e.external_id) for e in corpus_index}
+    duplicate_ids: list[str] = []
+    fetchable: list[ProposedTarget] = []
+    for t in proposals.targets:
+        if t.dedupe_verdict == VERDICT_DUPLICATE and (t.authority, t.external_id) in current_keys:
+            duplicate_ids.append(t.external_id)  # confirmed present-and-current → safe to drop
+            continue
+        fetchable.append(t)
     accepted = fetchable[:max_targets]
     skipped = len(fetchable) - len(accepted)
     return TargetSelection(
         accepted=accepted,
-        duplicate_count=duplicate_count,
+        duplicate_count=len(duplicate_ids),
+        duplicate_ids=duplicate_ids,
         skipped_count=skipped,
         skipped_reason="max_targets_budget" if skipped else None,
     )
@@ -346,18 +403,30 @@ async def run_corpus_discovery(
     async with session_scope() as session:
         run = await open_discovery_run(session, settings=settings, trigger=trigger)
         corpus_index = await gather_corpus_index(session)
-        proposals, tokens = await plan_discovery(
+        plan = await plan_discovery(
             session, settings=settings, entries=entries, corpus_index=corpus_index
         )
+        proposals, tokens = plan.proposals, plan.tokens
         outcome.tokens_used = tokens
         outcome.proposals_total = len(proposals.targets)
 
+        # If the LLM sweep short-circuited mid-flight (triage alone spent the budget), record the
+        # unexpanded signals as skipped — the spend is bounded, but nothing is dropped silently.
+        if plan.skipped_reason:
+            outcome.skipped_count += plan.skipped_signals
+            outcome.skipped_reason = plan.skipped_reason
+
         selection = select_fetchable_targets(
-            proposals, max_targets=settings.corpus_discovery_max_targets
+            proposals,
+            max_targets=settings.corpus_discovery_max_targets,
+            corpus_index=corpus_index,
         )
         outcome.proposals_deduped = selection.duplicate_count
-        outcome.skipped_count = selection.skipped_count
-        outcome.skipped_reason = selection.skipped_reason
+        outcome.skipped_count += selection.skipped_count
+        outcome.skipped_reason = outcome.skipped_reason or selection.skipped_reason
+        # Record WHICH docs were genuinely deduped (verified present-and-current), not just a count.
+        if selection.duplicate_ids:
+            outcome.notes = "deduped: " + ", ".join(selection.duplicate_ids[:50])
 
         # Token bound: if the LLM lanes already blew the budget, fetch nothing (but say so).
         budget = settings.corpus_discovery_token_budget
