@@ -259,9 +259,48 @@ class Settings(BaseSettings):
     corpus_discovery_token_budget: int = 50_000
     corpus_discovery_max_targets: int = 25
 
+    # ---- Jurisdiction-pluggable sources (WS2, federal-first rollout) ----
+    # Every corpus source carries a jurisdiction ("federal" or a state code like "CA"). We SHIP
+    # federal only; this allowlist is the config-driven seam that turns state/local sources on
+    # later (per product-granted-design's user-config IA) without a code change. Sources whose
+    # jurisdiction is not listed here are never built.
+    corpus_jurisdictions: str = "federal"
+    # State/local PDF sources, config-only (the jurisdiction-pluggable proof): comma-separated
+    # ``JURIS|https://host/x.pdf|Label`` entries. A source is only loaded when its JURIS is in
+    # ``corpus_jurisdictions`` (so this stays inert under the federal-first default). This ships
+    # the *mechanism* — not 50-state coverage.
+    corpus_state_pdf_sources: str = ""
+
+    # ---- Local corpus scheduler (WS2; the localhost stand-in for Cloud Scheduler) ----
+    # Deployment is deferred, so the tiered cadence runs from a standalone loop
+    # (``python -m captureos.corpus.schedule`` / ``make corpus-schedule``), NOT Cloud Scheduler.
+    # Last-run-per-cadence is persisted to a small JSON file so the loop survives restarts.
+    corpus_schedule_state_path: str = "./.data/corpus_schedule.json"
+    corpus_schedule_poll_seconds: int = 3600
+
     @property
     def corpus_discovery_extra_topic_list(self) -> list[str]:
         return [t.strip() for t in self.corpus_discovery_extra_topics.split(",") if t.strip()]
+
+    @property
+    def corpus_jurisdiction_list(self) -> list[str]:
+        out = [j.strip() for j in self.corpus_jurisdictions.split(",") if j.strip()]
+        return out or ["federal"]  # never leave the corpus with zero enabled jurisdictions
+
+    @property
+    def corpus_state_pdf_source_list(self) -> list[tuple[str, str, str]]:
+        """Parsed ``(jurisdiction, url, label)`` triples. Malformed entries are dropped (config,
+        not a bounded sweep). Adapters build the ``PdfSource`` (avoids a config→adapters import)."""
+        out: list[tuple[str, str, str]] = []
+        for entry in self.corpus_state_pdf_sources.split(","):
+            entry = entry.strip()
+            if not entry:
+                continue
+            parts = [p.strip() for p in entry.split("|")]
+            if len(parts) == 3 and all(parts):
+                juris, url, label = parts
+                out.append((juris, url, label))
+        return out
 
     @property
     def corpus_pdf_extra_url_list(self) -> list[str]:

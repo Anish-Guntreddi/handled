@@ -17,7 +17,7 @@ import httpx
 from captureos.config import Settings
 from captureos.corpus.ingest import CorpusItem
 from captureos.logging import get_logger
-from captureos.models.enums import CorpusAuthority, CorpusDocType
+from captureos.models.enums import CorpusAuthority, CorpusCadence, CorpusDocType
 
 logger = get_logger(__name__)
 
@@ -186,6 +186,7 @@ class PdfSource:
     citation_label: str
     title: str
     doc_type: str = CorpusDocType.publication.value
+    jurisdiction: str = "federal"  # federal-first; state/local PDFs carry their state code
 
 
 # Built-in small-business "get money" PDFs (stable IRS URLs). Operators add more (e.g. the current
@@ -255,26 +256,135 @@ class PdfAdapter:
                         external_id=src.url,
                         text=text,
                         source_url=src.url,
+                        jurisdiction=src.jurisdiction,
                     )
                 )
         return items
 
 
-def enabled_adapters(settings: Settings) -> list[CorpusAdapter]:
-    """The adapters to run, derived from config. Firecrawl only when a key + URLs are set."""
-    adapters: list[CorpusAdapter] = []
-    if settings.corpus_ecfr_target_list:
-        adapters.append(EcfrAdapter(settings.corpus_ecfr_target_list))
-    adapters.append(FederalRegisterAdapter())
-    if settings.firecrawl_api_key and settings.corpus_firecrawl_url_list:
-        adapters.append(
-            FirecrawlAdapter(settings.firecrawl_api_key, settings.corpus_firecrawl_url_list)
+# --------------------------------------------------------------------------------------
+# Source registry — the jurisdiction/cadence-pluggable seam (federal-first rollout)
+# --------------------------------------------------------------------------------------
+@dataclass(slots=True)
+class SourceDescriptor:
+    """One configured corpus source, tagged with the two axes WS2 generalizes over:
+
+    * ``jurisdiction`` — federal (shipped) or a state code; gated by ``corpus_jurisdiction_list``.
+    * ``cadence`` — how often the scheduler sweeps it (tiered by source volatility).
+
+    The adapter itself is unchanged — the descriptor just carries the routing metadata so the
+    scheduler can run the right sources on the right cadence without a pipeline rewrite.
+    """
+
+    key: str
+    authority: str
+    jurisdiction: str
+    cadence: CorpusCadence
+    adapter: CorpusAdapter
+
+
+def _state_local_sources(
+    settings: Settings, enabled: frozenset[str]
+) -> list[SourceDescriptor]:
+    """Config-driven state/local sources (the jurisdiction-pluggable proof). Inert under the
+    federal-first default; a source appears only once its jurisdiction is in ``enabled``. Grouped
+    into one PDF adapter per jurisdiction so each descriptor carries a single jurisdiction."""
+    by_juris: dict[str, list[PdfSource]] = {}
+    for juris, url, label in settings.corpus_state_pdf_source_list:
+        if juris not in enabled:
+            continue
+        by_juris.setdefault(juris, []).append(
+            PdfSource(
+                url=url,
+                authority=CorpusAuthority.manual.value,
+                citation_label=label,
+                title=label,
+                jurisdiction=juris,
+            )
         )
-    # GET-MONEY pillar: built-in IRS pubs + any operator-added PDFs (SBIR directive, NIST).
-    pdf_sources = list(_DEFAULT_PDF_SOURCES) + [
-        PdfSource(url=url, authority=CorpusAuthority.manual.value, citation_label=url, title=url)
-        for url in settings.corpus_pdf_extra_url_list
+    return [
+        SourceDescriptor(
+            key=f"pdf:{juris}",
+            authority="pdf",
+            jurisdiction=juris,
+            cadence=CorpusCadence.quarterly,
+            adapter=PdfAdapter(sources),
+        )
+        for juris, sources in sorted(by_juris.items())
     ]
-    if pdf_sources:
-        adapters.append(PdfAdapter(pdf_sources))
-    return adapters
+
+
+def corpus_sources(settings: Settings) -> list[SourceDescriptor]:
+    """Every enabled corpus source with its jurisdiction + cadence. Federal sources ship now;
+    state/local sources are config-driven and off under the federal-first default."""
+    enabled = frozenset(settings.corpus_jurisdiction_list)
+    sources: list[SourceDescriptor] = []
+    if "federal" in enabled:
+        if settings.corpus_ecfr_target_list:
+            sources.append(
+                SourceDescriptor(
+                    key="ecfr",
+                    authority=CorpusAuthority.ecfr.value,
+                    jurisdiction="federal",
+                    cadence=CorpusCadence.monthly,  # codified CFR/FAR text is slow-moving
+                    adapter=EcfrAdapter(settings.corpus_ecfr_target_list),
+                )
+            )
+        sources.append(
+            SourceDescriptor(
+                key="federal_register",
+                authority=CorpusAuthority.federal_register.value,
+                jurisdiction="federal",
+                cadence=CorpusCadence.weekly,  # new final rules land continuously
+                adapter=FederalRegisterAdapter(),
+            )
+        )
+        if settings.firecrawl_api_key and settings.corpus_firecrawl_url_list:
+            sources.append(
+                SourceDescriptor(
+                    key="firecrawl",
+                    authority=CorpusAuthority.firecrawl.value,
+                    jurisdiction="federal",
+                    cadence=CorpusCadence.monthly,  # form/guidance pages change slowly
+                    adapter=FirecrawlAdapter(
+                        settings.firecrawl_api_key, settings.corpus_firecrawl_url_list
+                    ),
+                )
+            )
+        # GET-MONEY pillar: built-in IRS pubs + any operator-added federal PDFs (SBIR/NIST).
+        pdf_sources = list(_DEFAULT_PDF_SOURCES) + [
+            PdfSource(
+                url=url, authority=CorpusAuthority.manual.value, citation_label=url, title=url
+            )
+            for url in settings.corpus_pdf_extra_url_list
+        ]
+        if pdf_sources:
+            sources.append(
+                SourceDescriptor(
+                    key="pdf",
+                    authority="pdf",
+                    jurisdiction="federal",
+                    cadence=CorpusCadence.quarterly,  # IRS/SBA/NIST pubs revise rarely
+                    adapter=PdfAdapter(pdf_sources),
+                )
+            )
+    sources.extend(_state_local_sources(settings, enabled))
+    return sources
+
+
+def enabled_adapters(
+    settings: Settings,
+    *,
+    jurisdiction: str | None = None,
+    cadence: CorpusCadence | None = None,
+) -> list[CorpusAdapter]:
+    """The adapters to run, optionally narrowed to one ``jurisdiction`` and/or ``cadence`` tier.
+
+    With no filters this returns every enabled source (unchanged full-sync behavior). The scheduler
+    passes ``cadence=`` to run only the sources due on that tier."""
+    return [
+        s.adapter
+        for s in corpus_sources(settings)
+        if (jurisdiction is None or s.jurisdiction == jurisdiction)
+        and (cadence is None or s.cadence == cadence)
+    ]

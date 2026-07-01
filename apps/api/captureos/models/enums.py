@@ -160,6 +160,21 @@ class CorpusAuthority(StrEnum):
     manual = "manual"
 
 
+class CorpusCadence(StrEnum):
+    """How often a corpus source is swept — tiered by source volatility (WS2 scheduler).
+
+    Cost scales with *what changed* (unchanged docs never re-embed thanks to the hash diff), so
+    high-volatility sources run often and slow-moving reference text runs rarely:
+      * ``weekly``    — Federal Register (new final rules) + the discovery sweep.
+      * ``monthly``   — eCFR/FAR codified parts + Firecrawl form/guidance pages.
+      * ``quarterly`` — IRS/SBA/NIST publications (PDF sources).
+    """
+
+    weekly = "weekly"
+    monthly = "monthly"
+    quarterly = "quarterly"
+
+
 class CorpusDiscoveryTrigger(StrEnum):
     """How a corpus-discovery sweep was kicked off (platform op — never per-tenant)."""
 
