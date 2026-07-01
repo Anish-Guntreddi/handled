@@ -26,6 +26,7 @@ from captureos.models.spend import (
     Cardholder,
     SpendAuthorization,
     SpendBudget,
+    SpendMerchantRule,
 )
 from captureos.models.workflow import AgentRun, WorkflowRun, WorkflowStep
 
@@ -58,6 +59,7 @@ __all__ = [
     "Cardholder",
     "SpendAuthorization",
     "SpendBudget",
+    "SpendMerchantRule",
     "AgentRun",
     "WorkflowRun",
     "WorkflowStep",

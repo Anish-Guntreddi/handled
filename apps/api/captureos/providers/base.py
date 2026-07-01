@@ -159,8 +159,44 @@ class BillingProvider(Protocol):
 
 @runtime_checkable
 class NotificationProvider(Protocol):
-    """Delivers a reminder to a recipient. Mock logs/records; smtp sends real email."""
+    """Delivers a reminder to a recipient. Mock logs/records; smtp sends real email; twilio SMS.
+
+    Two channels: ``send`` (email) for the renewals engine, ``send_sms`` for spend-guardrail
+    decline alerts (WS1). SMS bodies must never contain a card PAN/CVC or any secret.
+    """
 
     name: str
 
     async def send(self, *, to: str, subject: str, body: str) -> None: ...
+    async def send_sms(self, *, to: str, body: str) -> None: ...
+
+
+@dataclass(slots=True)
+class IssuingAuthorization:
+    """A normalized, real-time Stripe Issuing authorization request (the ~2s hot path).
+
+    Produced by an ``IssuingProvider`` only after the webhook signature is verified. Carries no
+    PAN/CVC — only the ``last4``-bearing card is looked up locally by ``stripe_card_id``.
+    """
+
+    stripe_auth_id: str
+    amount_cents: int
+    stripe_card_id: str | None = None
+    merchant: str | None = None
+    mcc: str | None = None
+    category: str | None = None
+
+
+@runtime_checkable
+class IssuingProvider(Protocol):
+    """Verifies + parses Stripe Issuing authorization webhooks (CON-4: signed server-side).
+
+    Returns a normalized ``IssuingAuthorization`` for an authentic ``issuing_authorization.request``
+    event, else ``None`` (bad signature / wrong type / malformed) so the hot path fails closed.
+    """
+
+    name: str
+
+    def verify_and_parse_webhook(
+        self, payload: bytes, signature: str | None
+    ) -> IssuingAuthorization | None: ...

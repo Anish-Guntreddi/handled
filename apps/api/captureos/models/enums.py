@@ -294,3 +294,18 @@ class SpendDecision(StrEnum):
 
     approved = "approved"
     declined = "declined"
+
+
+class SpendRuleKind(StrEnum):
+    """A precomputed allow/deny rule the hot path reads (materialized by the cold-path agent)."""
+
+    allow = "allow"
+    deny = "deny"
+
+
+class SpendRuleMatch(StrEnum):
+    """What dimension a spend rule / budget matches an authorization on."""
+
+    merchant = "merchant"
+    mcc = "mcc"
+    category = "category"

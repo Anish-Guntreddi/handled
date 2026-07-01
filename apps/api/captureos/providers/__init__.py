@@ -27,6 +27,7 @@ from captureos.providers.base import (
     BillingProvider,
     DocparseProvider,
     EmbeddingsProvider,
+    IssuingProvider,
     LLMProvider,
     ModelTier,
     NotificationProvider,
@@ -37,8 +38,9 @@ from captureos.providers.base import (
 from captureos.providers.billing import MockBilling, StripeBilling
 from captureos.providers.docparse import DocAIDocparse, LocalDocparse
 from captureos.providers.embeddings import GeminiEmbeddings, MockEmbeddings
+from captureos.providers.issuing import MockIssuing, StripeIssuing
 from captureos.providers.llm import AnthropicLLM, GeminiLLM, MockLLM
-from captureos.providers.notifications import MockNotifier, SmtpNotifier
+from captureos.providers.notifications import MockNotifier, SmtpNotifier, TwilioNotifications
 from captureos.providers.queue import LocalQueue, PubSubQueue
 from captureos.providers.secrets import EnvSecrets, GCPSecretManager
 from captureos.providers.storage import GCSStorage, LocalStorage
@@ -54,6 +56,7 @@ __all__ = [
     "AuditSink",
     "BillingProvider",
     "NotificationProvider",
+    "IssuingProvider",
     "get_llm",
     "get_embeddings",
     "get_storage",
@@ -63,6 +66,7 @@ __all__ = [
     "get_audit_sink",
     "get_billing",
     "get_notifier",
+    "get_issuing",
     "reset_providers",
 ]
 
@@ -148,9 +152,22 @@ def get_billing(settings: Settings | None = None) -> BillingProvider:
 @lru_cache
 def get_notifier(settings: Settings | None = None) -> NotificationProvider:
     s = settings or get_settings()
+    if s.notifications_provider is NotificationsProviderName.twilio:
+        return TwilioNotifications(s)
     if s.notifications_provider is NotificationsProviderName.smtp:
         return SmtpNotifier(s)
     return MockNotifier(s)
+
+
+@lru_cache
+def get_issuing(settings: Settings | None = None) -> IssuingProvider:
+    """Resolve the Stripe Issuing webhook verifier. StripeIssuing when Issuing is enabled with a
+    signing secret (prod); otherwise the HMAC-signed MockIssuing (local/CI), which still verifies
+    a server-side signature so the hot path is never unauthenticated."""
+    s = settings or get_settings()
+    if s.stripe_issuing_enabled:
+        return StripeIssuing(s)
+    return MockIssuing(s)
 
 
 def reset_providers() -> None:
@@ -165,5 +182,6 @@ def reset_providers() -> None:
         get_audit_sink,
         get_billing,
         get_notifier,
+        get_issuing,
     ):
         fn.cache_clear()

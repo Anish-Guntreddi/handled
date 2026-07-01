@@ -175,6 +175,11 @@ class Settings(BaseSettings):
     # (single-endpoint dev), but production uses a distinct `whsec_…` per endpoint.
     stripe_issuing_enabled: bool = False
     stripe_issuing_webhook_secret: str | None = None
+    # The mock Issuing provider signs its webhooks with an HMAC-SHA256 of the raw body using this
+    # secret, so the deterministic hot path can be exercised offline (CI) with real signature
+    # verification + fail-closed rejection of forged calls — no Stripe credentials required. It is
+    # a server-side secret like any other; a caller without it cannot forge a valid authorization.
+    issuing_mock_secret: str = "whsec_issuing_mock_dev_do_not_use_in_prod"  # noqa: S105
 
     @property
     def issuing_webhook_secret(self) -> str | None:

@@ -15,7 +15,14 @@ _CORPUS_TABLES = {"corpus_documents", "corpus_chunks"}
 
 def test_new_spend_and_entitlement_tables_are_org_scoped() -> None:
     """WS1/WS4 tables land org-scoped (CON-5): every new tenant table carries an indexed org_id."""
-    for name in ("cardholders", "cards", "spend_budgets", "spend_authorizations", "entitlements"):
+    for name in (
+        "cardholders",
+        "cards",
+        "spend_budgets",
+        "spend_merchant_rules",
+        "spend_authorizations",
+        "entitlements",
+    ):
         table = Base.metadata.tables[name]
         assert "org_id" in table.columns, f"{name} must be org-scoped"
         assert not table.columns["org_id"].nullable, f"{name}.org_id must be NOT NULL"
