@@ -221,6 +221,39 @@ async def test_uploaded_profile_injection_is_data_not_instructions(client: Async
     assert profile["certifications"] == []
 
 
+async def _programs(client: AsyncClient, org_id: str, headers: dict) -> set[str]:
+    progs = (await client.get(f"/api/v1/orgs/{org_id}/programs", headers=headers)).json()
+    return {p["programId"] for p in progs}
+
+
+async def test_uploaded_profile_md_improves_discovery_for_same_inputs(client: AsyncClient) -> None:
+    """The .md upload doesn't just decorate the brain — it improves the Find feed. For IDENTICAL
+    wizard inputs (bare company name), the org that uploaded an R&D company profile surfaces the
+    R&D tax credit that the org WITHOUT the doc never reaches (its profile has no R&D signal)."""
+    body = {"companyName": "Same Inputs Co"}  # deliberately identical, minimal wizard input
+
+    # A: no uploaded profile → the brain has almost nothing to ground R&D eligibility on.
+    headers_a, org_a = await _bootstrap(client, "ob-disc-a@example.com")
+    await _onboard(client, org_a, headers_a, body)
+    progs_a = await _programs(client, org_a, headers_a)
+
+    # B: same inputs, but first uploads an .md profile describing an R&D lab.
+    headers_b, org_b = await _bootstrap(client, "ob-disc-b@example.com")
+    await _ingest_profile_doc(
+        client,
+        org_b,
+        headers_b,
+        "# Company Profile for CaptureOS\n\n## What we do\n"
+        "We operate a research laboratory performing biotech science and engineering R&D.",
+    )
+    await _onboard(client, org_b, headers_b, body)
+    progs_b = await _programs(client, org_b, headers_b)
+
+    # The uploaded profile unlocked R&D money (IRC §41 credit) for the SAME wizard answers.
+    assert "rd_tax_credit" not in progs_a, progs_a  # no R&D signal without the doc
+    assert "rd_tax_credit" in progs_b, progs_b  # the doc's R&D text surfaced it
+
+
 async def test_diagnostic_answer_wins_over_inferred_across_onboarding(client: AsyncClient) -> None:
     """Diagnostic answers persisted via PATCH /company-profile (user_provided, confidence 1.0)
     win over inferred values and survive a re-onboarding enrichment pass (FR-CB-5)."""
