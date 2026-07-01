@@ -4,7 +4,7 @@
 
 ## Money (WS1 + WS4)
 - **[low] checkout-path idempotency parity** — `services/billing.py` `apply_webhook` (checkout path) doesn't wrap its `flush` in the `IntegrityError` guard the subscription path uses. A rare concurrent double-delivery of `checkout.session.completed` → one request 500s and Stripe retries (no double grant — the unique constraint holds). Tighten for parity.
-- **[ops] mis-configured price → retains tier** — a subscription for a Stripe price not in the configured map yields `tier=None`, which keeps the org's existing tier (fails toward not-granting). Attacker-uncontrollable; ops-config consideration.
+- **[ops] mis-configured price → retains tier** — ✅ **observability added.** A subscription for a Stripe price not in the configured map still yields `tier=None` and keeps the org's existing tier (fail-safe unchanged, fails toward not-granting), but `providers/billing.py::_tier_from_subscription` now emits a `billing.unmapped_subscription_price` warning naming the unmapped price id(s) — the only layer that sees the price id — so a blank/mis-configured `STRIPE_PRICE_*` env is no longer silent. (A Stripe `price_...` id is a public catalog identifier, not a secret.)
 
 ## Onboarding (WS3)
 - **[low/theoretical] DNS-rebinding residual** — `ingestion/website.py::fetch_website_text` validates each redirect hop via `_is_safe_public_url` (host guard), but httpx re-resolves DNS on the actual request; a TOCTOU/rebinding window remains. Degrades to empty text. Consider pinning the validated IP or a resolve-then-connect transport.

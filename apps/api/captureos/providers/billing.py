@@ -14,8 +14,11 @@ cancel / past_due. Every parsed event carries the Stripe ``event_id`` for idempo
 from __future__ import annotations
 
 from captureos.config import Settings
+from captureos.logging import get_logger
 from captureos.models.enums import EntitlementStatus
 from captureos.providers.base import CheckoutSession
+
+logger = get_logger(__name__)
 
 # Stripe subscription ``status`` → our durable ``EntitlementStatus``. Anything that is not a
 # fully-paid, in-good-standing subscription must NOT open a premium gate, so it maps to a
@@ -108,6 +111,13 @@ class StripeBilling:  # pragma: no cover - requires Stripe credentials
         )
 
     def _tier_from_subscription(self, sub: dict) -> str | None:
+        # A price id not in the configured price→tier map yields tier=None, which the service layer
+        # (``apply_subscription_event``) treats as "retain the org's existing tier" — the correct
+        # fail-safe (fails toward not-granting). But a silent None almost always means a
+        # mis-configured / blank ``STRIPE_PRICE_*`` env, so surface the unmapped price id(s) as a
+        # warning here — the only layer that sees the price id — to make the mis-config observable.
+        # A Stripe price id (``price_...``) is a public catalog identifier, not a secret (CON-4).
+        unmapped: list[str] = []
         try:
             items = (sub.get("items") or {}).get("data") or []
             for item in items:
@@ -117,8 +127,15 @@ class StripeBilling:  # pragma: no cover - requires Stripe credentials
                 tier = self._tier_by_price.get(str(price_id))
                 if tier:
                     return tier
+                unmapped.append(str(price_id))
         except Exception:
             return None
+        if unmapped:
+            logger.warning(
+                "billing.unmapped_subscription_price",
+                subscription_id=str(sub.get("id") or ""),
+                price_ids=unmapped,
+            )
         return None
 
     def verify_and_parse_webhook(self, payload: bytes, signature: str | None) -> dict | None:
