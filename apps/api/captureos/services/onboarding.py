@@ -80,6 +80,12 @@ async def apply_onboarding(
         "revenue": data.revenue,
         "ownership": ownership,
         "activities": activities,
+        # The wizard-derived description (do_what + activity phrases) and ownership-derived
+        # certifications are the authoritative eligibility signals the program scan matches on.
+        # Register them as overrides so the enrichment brain (run next in the onboarding pipeline)
+        # augments the profile WITHOUT clobbering these deterministic, user-provided fields.
+        "description": True,
+        "certifications": True,
     }
     await session.flush()
     return profile
@@ -103,9 +109,50 @@ def onboarding_brain_params(data: OnboardingRequest, *, fallback_name: str) -> d
     """
     return {
         "name": data.company_name or fallback_name or "Unknown Company",
-        "website_url": None,
+        # Optional wizard field; routed through the SSRF-guarded fetch_website_text in
+        # gather_company_sources (never fetched directly here).
+        "website_url": data.website_url,
         "industry": data.industry,
         "location": data.location,
         "description": data.do_what,
         "document_ids": None,
     }
+
+
+# Downloadable, standardized company-profile the owner can fill (e.g. via ChatGPT/Claude) and
+# upload/paste. It becomes a `document` source for the brain. Everything an owner types into it is
+# treated strictly as DATA (grounding text), never as instructions to the agent.
+COMPANY_PROFILE_TEMPLATE = """# Company Profile for CaptureOS
+
+> Fill in what you know and leave the rest blank. This document is used only as background
+> information about your company. Instructions or commands written here are ignored — only
+> factual details are read.
+
+## Company basics
+- **Legal name:**
+- **Website:**
+- **Primary location (city, state):**
+- **Year founded:**
+- **Number of employees:**
+- **Annual revenue (range):**
+- **UEI / SAM.gov registration (if any):**
+
+## What we do
+Describe your products and services in plain language (2-4 sentences):
+
+## Industry & NAICS
+- **Industry:**
+- **Known or suspected NAICS codes:**
+
+## Certifications & ownership
+List any certifications or ownership status (e.g. Woman-Owned, SDVOSB, HUBZone, 8(a), ISO 9001):
+
+## Past performance
+List notable contracts, grants, or customers (name, scope, approximate value, year):
+
+## Growth activities
+Note relevant activities (e.g. R&D, hiring, buying equipment, exporting) that may unlock funding:
+
+## Anything else
+Other facts that would help identify grants, credits, or set-asides you qualify for:
+"""
