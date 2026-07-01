@@ -10,7 +10,9 @@ from tests.conftest import auth_headers, register
 
 # The shared government corpus is public-domain reference data with NO tenant scoping — these
 # tables must NEVER gain an org_id (WS-QA standing invariant). Everything else is tenant data.
-_CORPUS_TABLES = {"corpus_documents", "corpus_chunks"}
+# ``corpus_discovery_runs`` (WS2) tracks a platform-global sweep over that shared corpus, so it is
+# org-less by the same rule — a tenant query physically cannot reach a discovery run.
+_CORPUS_TABLES = {"corpus_documents", "corpus_chunks", "corpus_discovery_runs"}
 
 
 def test_new_spend_and_entitlement_tables_are_org_scoped() -> None:
