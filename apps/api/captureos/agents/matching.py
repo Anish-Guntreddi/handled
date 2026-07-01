@@ -85,7 +85,7 @@ class EvidenceMatchOutput(BaseModel):
 
 class EvidenceMappingAgent(Agent[EvidenceMatchInput, EvidenceMatchOutput]):
     name = "evidence_mapping"
-    tier = ModelTier.pro
+    tier = ModelTier.flash
     output_model = EvidenceMatchOutput
     system_prompt = (
         "You map a solicitation requirement to the company's evidence. Decide matched/partial/"

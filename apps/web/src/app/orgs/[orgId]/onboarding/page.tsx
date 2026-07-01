@@ -9,14 +9,14 @@ import {
 } from "react";
 import { useParams, useRouter } from "next/navigation";
 
-import { Card, Eyebrow, GrantedLogo, Input, Textarea } from "@/components/granted";
+import { Card, Eyebrow, CaptureOSLogo, Input, Textarea } from "@/components/captureos";
 import { ApiError, apiFetch, errorMessage, pollWorkflowRun } from "@/lib/api";
-import { grantedFontVars } from "@/lib/granted-fonts";
+import { captureosFontVars } from "@/lib/captureos-fonts";
 import { useAuth } from "@/lib/auth";
 import type { WorkflowRunCreated } from "@/lib/types";
 
 // Onboarding wizard — the four-step profile capture that seeds the Company Brain
-// before the first money scan. Self-themed (it sits outside the `.granted`
+// before the first money scan. Self-themed (it sits outside the `.captureos`
 // workspace layout), it mirrors the design's WIZARD + LOADING screens exactly:
 // business basics → team size → ownership → activities → submit → scan loader →
 // /workspace/find. State lives in one object so Back never loses entered values.
@@ -180,7 +180,7 @@ export default function OnboardingPage() {
   if (loading || !isAuthenticated) {
     return (
       <div
-        className={`granted ${grantedFontVars}`}
+        className={`captureos ${captureosFontVars}`}
         style={{ display: "grid", placeItems: "center", minHeight: "100vh", color: "var(--gr-muted)" }}
       >
         Loading…
@@ -196,7 +196,7 @@ export default function OnboardingPage() {
 
   return (
     <div
-      className={`granted ${grantedFontVars} gr-weave`}
+      className={`captureos ${captureosFontVars} gr-weave`}
       style={{
         minHeight: "100vh",
         display: "flex",
@@ -215,7 +215,7 @@ export default function OnboardingPage() {
             marginBottom: 34,
           }}
         >
-          <GrantedLogo markSize={30} wordmarkSize={20} />
+          <CaptureOSLogo markSize={30} wordmarkSize={20} />
         </div>
 
         <Eyebrow color="var(--gr-muted-2)" style={{ letterSpacing: ".14em", marginBottom: 10 }}>
@@ -442,7 +442,7 @@ function LoadingScreen({ companyName }: { companyName: string }) {
   const who = companyName.trim() || "your business";
   return (
     <div
-      className={`granted ${grantedFontVars} gr-weave`}
+      className={`captureos ${captureosFontVars} gr-weave`}
       style={{
         minHeight: "100vh",
         display: "flex",

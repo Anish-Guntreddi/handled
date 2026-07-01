@@ -5,7 +5,7 @@ import Link from "next/link";
 
 import { useAuth } from "@/lib/auth";
 
-// Public introductory / "how it works" page for Handled. Self-contained: it
+// Public introductory / "how it works" page for CaptureOS. Self-contained: it
 // reuses the app's neutral Tailwind design language, useAuth for CTA targeting,
 // and React state for the interactive step-through, hover states, and expandable
 // category cards — no new dependencies.
@@ -26,7 +26,7 @@ const STEPS: Step[] = [
     title: "Build the Company Brain",
     blurb: "A sourced profile of who you are and what you do.",
     detail:
-      "Paste your website, upload capability docs, or describe your business. Handled drafts a capability statement, guesses NAICS codes, and tracks certifications — with every fact tied back to the document or page it came from.",
+      "Paste your website, upload capability docs, or describe your business. CaptureOS drafts a capability statement, guesses NAICS codes, and tracks certifications — with every fact tied back to the document or page it came from.",
     bullets: [
       "Capability statement + service catalog",
       "NAICS code guesses with confidence",
@@ -52,7 +52,7 @@ const STEPS: Step[] = [
     title: "Start a filing",
     blurb: "Extract requirements, match evidence, get a recommendation.",
     detail:
-      "Turn an opportunity into a filing. Handled extracts the requirements from the solicitation, matches them against your evidence in a live compliance matrix, and produces a pursue / no-pursue recommendation — which a human reviews and approves before anything moves forward.",
+      "Turn an opportunity into a filing. CaptureOS extracts the requirements from the solicitation, matches them against your evidence in a live compliance matrix, and produces a pursue / no-pursue recommendation — which a human reviews and approves before anything moves forward.",
     bullets: [
       "Automatic requirement extraction",
       "Live compliance matrix (met / gap / unknown)",
@@ -65,7 +65,7 @@ const STEPS: Step[] = [
     title: "Build & export the package",
     blurb: "A fully-cited package you approve before it leaves.",
     detail:
-      "Assemble a complete, citation-backed package. Once a human approves it at the gate, export to Markdown, PDF, or DOCX. Handled never auto-submits — the file is yours to file.",
+      "Assemble a complete, citation-backed package. Once a human approves it at the gate, export to Markdown, PDF, or DOCX. CaptureOS never auto-submits — the file is yours to file.",
     bullets: [
       "Every claim cited to its source",
       "Approval gate before any export",
@@ -116,7 +116,7 @@ const CATEGORIES: Category[] = [
     tag: "matrix builder",
     tone: "violet",
     summary:
-      "Point Handled at any solicitation or regulation and get a structured compliance matrix you can work through.",
+      "Point CaptureOS at any solicitation or regulation and get a structured compliance matrix you can work through.",
     points: [
       "Requirements extracted from any source document",
       "Evidence matched line-by-line (met / gap / unknown)",
@@ -184,7 +184,7 @@ export default function HowItWorksPage() {
   return (
     <main className="mx-auto max-w-5xl px-6 py-12">
       <header className="flex items-center justify-between">
-        <span className="text-lg font-semibold tracking-tight">Handled</span>
+        <span className="text-lg font-semibold tracking-tight">CaptureOS</span>
         <Link
           href={ctaHref}
           className="rounded-lg border border-neutral-300 px-3 py-1.5 text-sm font-medium hover:bg-neutral-100"
@@ -203,7 +203,7 @@ export default function HowItWorksPage() {
           Find, qualify, and prepare government bids — without the busywork.
         </h1>
         <p className="mt-5 text-lg leading-relaxed text-neutral-600">
-          Handled helps small businesses discover government contract bids, research grants, and
+          CaptureOS helps small businesses discover government contract bids, research grants, and
           compliance paperwork — qualifying each one with AI, citing every claim to its source, and
           keeping a human approval gate in front of anything that leaves. Nothing auto-submits.
         </p>
@@ -255,7 +255,7 @@ export default function HowItWorksPage() {
       </section>
 
       <footer className="mt-12 text-center text-xs text-neutral-400">
-        Handled · AI-assisted, human-approved. The platform prepares packages — it never submits them.
+        CaptureOS · AI-assisted, human-approved. The platform prepares packages — it never submits them.
       </footer>
     </main>
   );
@@ -442,7 +442,7 @@ function CategoriesGrid() {
 function WhyUs() {
   return (
     <section className="mt-20">
-      <h2 className="text-sm font-medium uppercase tracking-wide text-neutral-500">Why Handled</h2>
+      <h2 className="text-sm font-medium uppercase tracking-wide text-neutral-500">Why CaptureOS</h2>
       <p className="mt-1 text-xl font-semibold tracking-tight">
         Built so you can trust what it gives you.
       </p>

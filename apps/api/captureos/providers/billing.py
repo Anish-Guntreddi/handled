@@ -57,6 +57,8 @@ class StripeBilling:  # pragma: no cover - requires Stripe credentials
         self, *, org_id: str, product: str, amount_cents: int, success_url: str
     ) -> CheckoutSession:
         price = self._prices.get(product)
+        if price is None:
+            raise RuntimeError(f"no Stripe price configured for product {product!r}")
         session = self._stripe.checkout.Session.create(
             mode="subscription",
             line_items=[{"price": price, "quantity": 1}],
@@ -65,7 +67,7 @@ class StripeBilling:  # pragma: no cover - requires Stripe credentials
         )
         return CheckoutSession(
             session_id=session.id,
-            url=session.url,
+            url=session.url or "",
             product=product,
             amount_cents=amount_cents,
         )

@@ -83,7 +83,7 @@ def _categorize(sentence: str) -> str:
 
 class RequirementExtractionAgent(Agent[RequirementExtractionInput, RequirementExtractionOutput]):
     name = "requirement_extraction"
-    tier = ModelTier.pro
+    tier = ModelTier.flash
     output_model = RequirementExtractionOutput
     system_prompt = (
         "You extract a structured, deduplicated list of compliance requirements from a "

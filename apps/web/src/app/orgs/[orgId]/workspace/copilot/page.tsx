@@ -14,7 +14,7 @@ import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 
-import { EligibilityBadge } from "@/components/granted";
+import { EligibilityBadge } from "@/components/captureos";
 import { ApiError, apiFetch, errorMessage } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import type { CompanyProfile, CopilotAnswer } from "@/lib/types";
@@ -86,7 +86,7 @@ function brainFacts(profile: CompanyProfile): BrainFact[] {
 }
 
 // ---------------------------------------------------------------------------
-// Icons mirror the design's COPILOT glyphs (brain kicker, Granted avatar check,
+// Icons mirror the design's COPILOT glyphs (brain kicker, CaptureOS avatar check,
 // per-card spark, arrows).
 function BrainIcon() {
   return (
@@ -195,7 +195,7 @@ function CopilotInner() {
         setMessages((prev) =>
           prev.map((m) =>
             m.id === assistantId && m.role === "assistant"
-              ? { ...m, status: "errored", error: errorMessage(err, "Couldn't reach Handled.") }
+              ? { ...m, status: "errored", error: errorMessage(err, "Couldn't reach CaptureOS.") }
               : m,
           ),
         );
@@ -292,7 +292,7 @@ function CopilotInner() {
           color: "var(--gr-heading)",
         }}
       >
-        Ask Handled anything
+        Ask CaptureOS anything
       </h1>
       <p
         style={{
@@ -455,7 +455,7 @@ function CopilotInner() {
           onFocus={() => setInputFocused(true)}
           onBlur={() => setInputFocused(false)}
           placeholder="Ask about your business, eligibility, or next steps…"
-          aria-label="Ask Handled a question"
+          aria-label="Ask CaptureOS a question"
           style={{
             flex: 1,
             minWidth: 240,
@@ -535,7 +535,7 @@ function AssistantTurn({
             color: "var(--gr-muted-2)",
           }}
         >
-          Handled
+          CaptureOS
         </span>
       </div>
 
@@ -857,7 +857,7 @@ function ComposerButton({ onClick }: { onClick: () => void }) {
         whiteSpace: "nowrap",
       }}
     >
-      Ask Handled →
+      Ask CaptureOS →
     </button>
   );
 }

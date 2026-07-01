@@ -115,7 +115,7 @@ _COMMON_FUNDING = ["SBIR/STTR", "Economic development grants", "State small-busi
 
 class CompanyBrainAgent(Agent[CompanyBrainInput, CompanyBrainOutput]):
     name = "company_brain"
-    tier = ModelTier.pro
+    tier = ModelTier.flash
     output_model = CompanyBrainOutput
     system_prompt = (
         "You are a government-contracting and grants analyst. Build a precise, conservative "

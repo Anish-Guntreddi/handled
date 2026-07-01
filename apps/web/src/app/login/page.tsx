@@ -37,7 +37,7 @@ export default function LoginPage() {
         await register(email, password, fullName || undefined, orgName || undefined);
       }
       // Resolve the user's first org (the existing /auth/me → orgs[0] pattern) and
-      // land them inside the Handled app. New users start the onboarding wizard;
+      // land them inside the CaptureOS app. New users start the onboarding wizard;
       // returning users go straight to Find. No org → fall back to the dashboard.
       const me = await apiFetch<Me>("/auth/me").catch(() => null);
       const firstOrgId = me?.orgs[0]?.orgId;
@@ -60,7 +60,7 @@ export default function LoginPage() {
   return (
     <main className="grid min-h-screen place-items-center p-6">
       <div className="w-full max-w-sm rounded-2xl border border-neutral-200 bg-white p-8 shadow-sm">
-        <h1 className="text-xl font-semibold tracking-tight">Handled</h1>
+        <h1 className="text-xl font-semibold tracking-tight">CaptureOS</h1>
         <p className="mt-1 text-sm text-neutral-500">
           {mode === "login" ? "Sign in to your account" : "Create your account"}
         </p>
@@ -128,7 +128,7 @@ export default function LoginPage() {
         </button>
 
         <p className="mt-6 border-t border-neutral-100 pt-4 text-center text-xs text-neutral-400">
-          New to Handled?{" "}
+          New to CaptureOS?{" "}
           <Link href="/how-it-works" className="text-neutral-600 underline hover:text-neutral-900">
             See how it works
           </Link>
