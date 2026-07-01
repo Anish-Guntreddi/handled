@@ -30,6 +30,7 @@ from captureos.agents.base import AgentContext
 from captureos.agents.corpus_discovery import (
     KIND_ECFR,
     KIND_FEDERAL_REGISTER,
+    KIND_PDF,
     VERDICT_DUPLICATE,
     CorpusDiscoveryAgent,
     CorpusIndexEntry,
@@ -409,7 +410,8 @@ async def _fetch_target(
     target: ProposedTarget, fr_items: dict[str, CorpusItem]
 ) -> list[CorpusItem]:  # pragma: no cover - live network
     """Map an accepted target to ``CorpusItem``s via the EXISTING adapters (no pipeline rewrite)."""
-    from captureos.corpus.adapters import EcfrAdapter
+    from captureos.corpus.adapters import EcfrAdapter, PdfAdapter, PdfSource
+    from captureos.models.enums import CorpusAuthority
 
     if target.kind == KIND_FEDERAL_REGISTER:
         item = fr_items.get(target.external_id)
@@ -417,4 +419,22 @@ async def _fetch_target(
     if target.kind == KIND_ECFR:
         title, _, part = target.external_id.partition(":")
         return await EcfrAdapter([(title.strip(), part.strip())]).fetch()
-    return []
+    if target.kind == KIND_PDF:
+        # A pdf target's url already cleared resolve_fetch_url (allowlist + SSRF) upstream; hand it
+        # to the EXISTING PdfAdapter (download → extract → CorpusItem) instead of silently dropping
+        # it. PdfAdapter re-checks https + the SSRF guard, so this is doubly guarded.
+        if not target.url:
+            raise ValueError(f"pdf target {target.external_id!r} has no url")
+        return await PdfAdapter(
+            [
+                PdfSource(
+                    url=target.url,
+                    authority=target.authority or CorpusAuthority.manual.value,
+                    citation_label=target.citation or target.url,
+                    title=target.title or target.url,
+                )
+            ]
+        ).fetch()
+    # No silent drops: an unknown/unsupported kind is surfaced (the orchestrator records it as
+    # skipped and logs the reason), never quietly discarded.
+    raise ValueError(f"unsupported target kind: {target.kind!r}")
