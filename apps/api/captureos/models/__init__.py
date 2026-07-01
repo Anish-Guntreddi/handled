@@ -7,6 +7,7 @@ from captureos.models.billing import CustomerFeedback, RevenueRecord, Subscripti
 from captureos.models.company import CompanyProfile
 from captureos.models.corpus import CorpusChunk, CorpusDocument
 from captureos.models.documents import Document, DocumentChunk
+from captureos.models.entitlement import Entitlement
 from captureos.models.evidence import EvidenceItem, Source
 from captureos.models.filings import (
     Approval,
@@ -20,6 +21,12 @@ from captureos.models.jobs import WorkflowJob
 from captureos.models.obligations import Obligation
 from captureos.models.opportunities import Opportunity
 from captureos.models.org import Organization, OrgMember, User
+from captureos.models.spend import (
+    Card,
+    Cardholder,
+    SpendAuthorization,
+    SpendBudget,
+)
 from captureos.models.workflow import AgentRun, WorkflowRun, WorkflowStep
 
 __all__ = [
@@ -33,6 +40,7 @@ __all__ = [
     "CorpusDocument",
     "Document",
     "DocumentChunk",
+    "Entitlement",
     "EvidenceItem",
     "Source",
     "Approval",
@@ -46,6 +54,10 @@ __all__ = [
     "OrgMember",
     "Organization",
     "User",
+    "Card",
+    "Cardholder",
+    "SpendAuthorization",
+    "SpendBudget",
     "AgentRun",
     "WorkflowRun",
     "WorkflowStep",

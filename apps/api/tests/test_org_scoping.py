@@ -4,7 +4,28 @@ from __future__ import annotations
 
 from httpx import AsyncClient
 
+import captureos.models  # noqa: F401 - registers every table on Base.metadata
+from captureos.db.base import Base
 from tests.conftest import auth_headers, register
+
+# The shared government corpus is public-domain reference data with NO tenant scoping — these
+# tables must NEVER gain an org_id (WS-QA standing invariant). Everything else is tenant data.
+_CORPUS_TABLES = {"corpus_documents", "corpus_chunks"}
+
+
+def test_new_spend_and_entitlement_tables_are_org_scoped() -> None:
+    """WS1/WS4 tables land org-scoped (CON-5): every new tenant table carries an indexed org_id."""
+    for name in ("cardholders", "cards", "spend_budgets", "spend_authorizations", "entitlements"):
+        table = Base.metadata.tables[name]
+        assert "org_id" in table.columns, f"{name} must be org-scoped"
+        assert not table.columns["org_id"].nullable, f"{name}.org_id must be NOT NULL"
+
+
+def test_corpus_tables_never_gain_org_id() -> None:
+    """The shared corpus stays tenant-agnostic (standing invariant)."""
+    for name in _CORPUS_TABLES:
+        table = Base.metadata.tables[name]
+        assert "org_id" not in table.columns, f"corpus table {name} must not have org_id"
 
 
 async def _create_org(client: AsyncClient, tokens: dict, name: str) -> dict:

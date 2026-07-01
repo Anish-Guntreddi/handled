@@ -73,8 +73,9 @@ class BillingProviderName(StrEnum):
 
 
 class NotificationsProviderName(StrEnum):
-    mock = "mock"  # logs + records an audit event; no external send
+    mock = "mock"  # logs + records an audit event; no external send (a.k.a. "local")
     smtp = "smtp"  # real email via stdlib smtplib (no extra dependency)
+    twilio = "twilio"  # real SMS via Twilio (spend-guardrail decline alerts, WS1)
 
 
 class Settings(BaseSettings):
@@ -168,6 +169,17 @@ class Settings(BaseSettings):
     stripe_price_audit: str | None = None
     stripe_price_sprint: str | None = None
     stripe_price_autopilot: str | None = None
+    # ---- Spend Guardrail / Stripe Issuing (WS1) ----
+    # Issuing authorization webhooks are a SEPARATE Stripe endpoint from subscription billing,
+    # so they carry their own signing secret. Defaults to the billing webhook secret when unset
+    # (single-endpoint dev), but production uses a distinct `whsec_…` per endpoint.
+    stripe_issuing_enabled: bool = False
+    stripe_issuing_webhook_secret: str | None = None
+
+    @property
+    def issuing_webhook_secret(self) -> str | None:
+        """The signing secret for the Issuing webhook, falling back to the billing secret."""
+        return self.stripe_issuing_webhook_secret or self.stripe_webhook_secret
 
     # ---- External sources ----
     sam_gov_api_key: str | None = None
@@ -188,6 +200,12 @@ class Settings(BaseSettings):
     smtp_user: str | None = None
     smtp_password: str | None = None
     smtp_use_tls: bool = True
+    # Twilio SMS (WS1 spend-guardrail decline alerts). Secrets are server-side only and never
+    # logged; SMS bodies must never contain a card PAN/CVC. Mock/local default keeps the app
+    # runnable with no creds.
+    twilio_account_sid: str | None = None
+    twilio_auth_token: str | None = None
+    twilio_from_number: str | None = None
 
     # ---- Government corpus (KB) ----
     # Free .gov APIs feed most of the corpus; Firecrawl handles the HTML/scrape-only long tail.
@@ -299,6 +317,20 @@ class Settings(BaseSettings):
                 raise ValueError(
                     "SMTP_HOST and NOTIFICATION_FROM_EMAIL are required "
                     "when NOTIFICATIONS_PROVIDER=smtp"
+                )
+            if self.notifications_provider is NotificationsProviderName.twilio and not (
+                self.twilio_account_sid and self.twilio_auth_token and self.twilio_from_number
+            ):
+                raise ValueError(
+                    "TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN and TWILIO_FROM_NUMBER are "
+                    "required when NOTIFICATIONS_PROVIDER=twilio"
+                )
+            # Fail closed: an Issuing authorization webhook that can't verify signatures would
+            # have to approve/decline unauthenticated card swipes — never allow that (CON-4).
+            if self.stripe_issuing_enabled and not self.issuing_webhook_secret:
+                raise ValueError(
+                    "STRIPE_ISSUING_WEBHOOK_SECRET (or STRIPE_WEBHOOK_SECRET) required "
+                    "when STRIPE_ISSUING_ENABLED=true"
                 )
             # Fail closed: mock billing has no payment verification, so it must never run in a
             # deployed env, and a real Stripe webhook must be signature-verifiable (CON-4).
