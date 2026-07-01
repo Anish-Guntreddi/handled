@@ -71,6 +71,10 @@ seed: ## Seed demo data
 corpus-sync: ## Run one corpus sync + embed pass (WS2 knowledge engine; a cron calls this on deploy)
 	cd $(API_DIR) && uv run python -m captureos.corpus.sync && uv run python -m captureos.corpus.embed
 
+.PHONY: corpus-discover
+corpus-discover: ## Run one autonomous discovery sweep + embed (WS2; proposes deduped new targets)
+	cd $(API_DIR) && uv run python -m captureos.corpus.discover && uv run python -m captureos.corpus.embed
+
 # ---------- Frontend (web) ----------
 .PHONY: web-install
 web-install: ## Install frontend deps
