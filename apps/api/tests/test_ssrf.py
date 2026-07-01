@@ -8,8 +8,12 @@ Covers the two server-side fetch surfaces that take a URL:
 
 from __future__ import annotations
 
+import socket
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import urlparse
 
+import httpcore
 import httpx
 import pytest
 from httpx import AsyncClient
@@ -87,6 +91,70 @@ async def test_redirect_to_internal_metadata_is_not_followed(
     assert internal_secret not in result  # no internal body entered the result
     assert requested == [public]  # only the initial public GET; the metadata IP was never fetched
     assert not any("169.254.169.254" in u for u in requested)
+
+
+# --- DNS-rebinding closure: the pinned network backend validates + dials at connect time ---
+
+
+def _fake_getaddrinfo(ip: str):
+    """A ``socket.getaddrinfo`` stub that resolves ANY host to ``ip`` on the requested port."""
+
+    def _gai(host: str, port: int, *args: object, **kwargs: object) -> list:
+        return [(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", (ip, port))]
+
+    return _gai
+
+
+async def test_pinned_backend_refuses_rebound_private_address(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """DNS-rebinding closure (NFR-2): even a host that passed the per-hop guard is re-resolved by
+    the pinned backend at CONNECT time and REFUSED (never dialed) when it now resolves to an
+    internal address — so a low-TTL rebind to the cloud metadata IP can't be reached."""
+    monkeypatch.setattr(website.socket, "getaddrinfo", _fake_getaddrinfo("169.254.169.254"))
+    backend = website._PinnedResolvingBackend()
+    with pytest.raises(httpcore.ConnectError):
+        await backend.connect_tcp("rebound-to-metadata.test", 80)
+
+
+async def test_pinned_backend_connects_to_resolved_ip_preserving_host(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The pin dials the exact resolved IP while httpx keeps the original ``Host`` header (the HTTP
+    analog of the preserved TLS SNI/cert), so legitimate fetches still succeed through the pin."""
+    received_hosts: list[str] = []
+
+    class _Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802 - required BaseHTTPRequestHandler method name
+            received_hosts.append(self.headers.get("Host", ""))
+            body = b"ok"
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args: object) -> None:  # keep the test output quiet
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), _Handler)
+    port = server.server_address[1]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        # Resolve the fake host to loopback and (only for this test) treat loopback as allowed, so
+        # the pin exercises a real connect to a local server without the guard refusing it.
+        monkeypatch.setattr(website.socket, "getaddrinfo", _fake_getaddrinfo("127.0.0.1"))
+        monkeypatch.setattr(website, "_ip_is_disallowed", lambda ip: False)
+        async with httpx.AsyncClient(
+            transport=website._PinnedTransport(), follow_redirects=False
+        ) as pinned_client:
+            resp = await pinned_client.get(f"http://pinned-legit.test:{port}/")
+        assert resp.status_code == 200 and resp.text == "ok"
+        # Dialed 127.0.0.1 (the pin) but sent Host: pinned-legit.test — hostname preserved.
+        assert received_hosts == [f"pinned-legit.test:{port}"]
+    finally:
+        server.shutdown()
+        thread.join(timeout=2)
 
 
 # --- WS2 discovery: agent-proposed URLs go through the SSRF guard (https + allowlisted host) ---
