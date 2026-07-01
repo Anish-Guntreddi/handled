@@ -236,3 +236,61 @@ class BillingProduct(StrEnum):
     audit = "audit"
     sprint = "sprint"
     autopilot = "autopilot"
+
+
+class EntitlementTier(StrEnum):
+    """Which paid tier an org's active entitlement covers (drives ``assert_entitled``)."""
+
+    audit = "audit"
+    sprint = "sprint"
+    autopilot = "autopilot"
+
+
+class EntitlementStatus(StrEnum):
+    """Lifecycle of a per-org subscription entitlement (mirrors Stripe subscription states)."""
+
+    active = "active"
+    past_due = "past_due"
+    canceled = "canceled"
+    incomplete = "incomplete"
+
+
+class CardholderStatus(StrEnum):
+    """Stripe Issuing cardholder status."""
+
+    active = "active"
+    inactive = "inactive"
+    blocked = "blocked"
+
+
+class CardStatus(StrEnum):
+    """Stripe Issuing card status."""
+
+    active = "active"
+    inactive = "inactive"
+    canceled = "canceled"
+
+
+class SpendInterval(StrEnum):
+    """Budget reset interval — mirrors Stripe ``spending_controls`` interval values."""
+
+    per_authorization = "per_authorization"
+    daily = "daily"
+    weekly = "weekly"
+    monthly = "monthly"
+    yearly = "yearly"
+    all_time = "all_time"
+
+
+class SpendBudgetSource(StrEnum):
+    """How a budget rule was created: translated from natural language, or set by hand."""
+
+    nl = "nl"
+    manual = "manual"
+
+
+class SpendDecision(StrEnum):
+    """Outcome of a real-time issuing authorization (the deterministic hot-path verdict)."""
+
+    approved = "approved"
+    declined = "declined"
