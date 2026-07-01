@@ -43,7 +43,9 @@ class OppResearchOutput(BaseModel):
 
 class OpportunityResearchAgent(Agent[OppResearchInput, OppResearchOutput]):
     name = "opportunity_research"
-    tier = ModelTier.pro
+    # Bulk agency/prior-award research is a high-volume summarization task (not the bid/no-bid
+    # judgment call), so it runs on flash. FitScoringAgent below stays on pro for the decision.
+    tier = ModelTier.flash
     output_model = OppResearchOutput
     system_prompt = (
         "You are a federal capture analyst. Summarize the buying agency and its prior award "
