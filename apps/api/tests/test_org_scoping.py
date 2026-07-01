@@ -38,6 +38,71 @@ def test_corpus_tables_never_gain_org_id() -> None:
         assert "org_id" not in table.columns, f"corpus table {name} must not have org_id"
 
 
+def test_onboarding_intake_tables_are_org_scoped() -> None:
+    """WS3 onboarding intake: uploaded ``.md`` docs and the brain's sourced evidence are tenant
+    data — the tables that hold them carry an indexed, NOT NULL ``org_id`` (CON-5)."""
+    for name in ("documents", "document_chunks", "sources", "evidence_items"):
+        table = Base.metadata.tables[name]
+        assert "org_id" in table.columns, f"{name} must be org-scoped"
+        assert not table.columns["org_id"].nullable, f"{name}.org_id must be NOT NULL"
+
+
+async def _bootstrap(client: AsyncClient, email: str) -> tuple[dict, str]:
+    tokens = await register(client, email, org_name="Placeholder LLC")
+    me = await client.get("/api/v1/auth/me", headers=auth_headers(tokens))
+    return auth_headers(tokens), me.json()["orgs"][0]["orgId"]
+
+
+async def _run_to_terminal(client: AsyncClient, org_id: str, headers: dict, run_id: str) -> None:
+    run = await client.get(f"/api/v1/orgs/{org_id}/workflow-runs/{run_id}", headers=headers)
+    assert run.json()["status"] == "succeeded", run.text
+
+
+async def test_uploaded_profile_doc_and_evidence_are_org_isolated(client: AsyncClient) -> None:
+    """WS3 (D · Onboarding): one org's uploaded ``.md`` profile must never leak into another org's
+    Company Brain. Org A ingests a distinctive logistics profile; Org B — with IDENTICAL bare wizard
+    input but no upload — must not inherit A's warehouse NAICS, proving the brain's chunk gather is
+    org-scoped and evidence stays tenant-isolated."""
+    headers_a, org_a = await _bootstrap(client, "iso-a@example.com")
+    doc = await client.post(
+        f"/api/v1/orgs/{org_a}/onboarding/profile-doc",
+        json={
+            "markdown": "# Company Profile for CaptureOS\n\n## What we do\n"
+            "We run a logistics and warehouse distribution operation with supply-chain services."
+        },
+        headers=headers_a,
+    )
+    assert doc.status_code == 202, doc.text
+    await _run_to_terminal(client, org_a, headers_a, doc.json()["workflowRunId"])
+    on_a = await client.post(
+        f"/api/v1/orgs/{org_a}/onboarding", json={"companyName": "Logi A"}, headers=headers_a
+    )
+    await _run_to_terminal(client, org_a, headers_a, on_a.json()["workflowRunId"])
+
+    # A's brain picked up the uploaded doc → warehouse NAICS 493110.
+    profile_a = (
+        await client.get(f"/api/v1/orgs/{org_a}/company-profile", headers=headers_a)
+    ).json()
+    assert any(g["code"] == "493110" for g in profile_a["naicsGuesses"]), profile_a["naicsGuesses"]
+
+    # B onboards with the SAME bare input and NO upload → must not inherit A's chunks/evidence.
+    headers_b, org_b = await _bootstrap(client, "iso-b@example.com")
+    on_b = await client.post(
+        f"/api/v1/orgs/{org_b}/onboarding", json={"companyName": "Logi A"}, headers=headers_b
+    )
+    await _run_to_terminal(client, org_b, headers_b, on_b.json()["workflowRunId"])
+    profile_b = (
+        await client.get(f"/api/v1/orgs/{org_b}/company-profile", headers=headers_b)
+    ).json()
+    assert not any(g["code"] == "493110" for g in profile_b["naicsGuesses"]), profile_b[
+        "naicsGuesses"
+    ]
+
+    # And B cannot read A's profile at all (CON-5).
+    cross = await client.get(f"/api/v1/orgs/{org_a}/company-profile", headers=headers_b)
+    assert cross.status_code == 404
+
+
 async def _create_org(client: AsyncClient, tokens: dict, name: str) -> dict:
     resp = await client.post("/api/v1/orgs", json={"name": name}, headers=auth_headers(tokens))
     assert resp.status_code == 201, resp.text

@@ -9,10 +9,13 @@ Covers the two server-side fetch surfaces that take a URL:
 from __future__ import annotations
 
 import pytest
+from httpx import AsyncClient
 
+from captureos.ingestion import website
 from captureos.ingestion.website import _is_safe_public_url
 from captureos.services import corpus_discovery as svc
 from captureos.services.corpus_discovery import is_allowlisted_https, resolve_fetch_url
+from tests.conftest import auth_headers, register
 
 _UNSAFE_URLS = [
     "http://localhost:8000",
@@ -52,6 +55,46 @@ def test_discovery_url_gate_requires_https_and_allowlisted_gov_host() -> None:
     assert is_allowlisted_https("https://169.254.169.254/latest/meta-data/") is False
     assert is_allowlisted_https("ftp://www.sba.gov/f") is False
     assert is_allowlisted_https(None) is False
+
+
+# --- WS3 onboarding: website enrichment stays behind the SSRF guard (D · Onboarding) ---
+
+
+async def test_onboarding_website_enrichment_goes_through_ssrf_guard(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The wizard's ``websiteUrl`` reaches the brain ONLY via the guarded fetch. Submitting a cloud
+    metadata URL must (a) be routed through ``_is_safe_public_url`` and (b) fetch nothing — the run
+    still succeeds (graceful degrade), never crawling the internal address."""
+    verdicts: dict[str, bool] = {}
+    real_guard = website._is_safe_public_url
+
+    async def _spy(url: str) -> bool:
+        allowed = await real_guard(url)  # keep the real verdict (metadata URL → False)
+        verdicts[url] = allowed
+        return allowed
+
+    monkeypatch.setattr(website, "_is_safe_public_url", _spy)
+
+    tokens = await register(client, "ssrf-onb@example.com", org_name="Placeholder LLC")
+    me = await client.get("/api/v1/auth/me", headers=auth_headers(tokens))
+    org_id = me.json()["orgs"][0]["orgId"]
+
+    metadata = "http://169.254.169.254/latest/meta-data/"
+    resp = await client.post(
+        f"/api/v1/orgs/{org_id}/onboarding",
+        json={"companyName": "SSRF Co", "websiteUrl": metadata},
+        headers=auth_headers(tokens),
+    )
+    assert resp.status_code == 202, resp.text
+    run = await client.get(
+        f"/api/v1/orgs/{org_id}/workflow-runs/{resp.json()['workflowRunId']}",
+        headers=auth_headers(tokens),
+    )
+    assert run.json()["status"] == "succeeded", run.text  # degraded gracefully, did not crash
+    # The onboarding path consulted the SSRF guard for this URL and the guard REFUSED it, so the
+    # fetch short-circuited before any HTTP request to the internal metadata address.
+    assert verdicts.get(metadata) is False
 
 
 async def test_resolve_fetch_url_invokes_public_ip_guard_for_allowlisted_host(
