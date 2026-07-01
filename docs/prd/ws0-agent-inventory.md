@@ -21,7 +21,7 @@
 | `FitRecommendationAgent` | `agents/recommendation.py` | yes | **pro** | kept | Pursue / do-not-pursue judgment |
 | `NarrativeGenerationAgent` | `agents/narrative.py` | yes | **pro** | kept | Final written-deliverable quality |
 | `OpportunityResearchAgent` | `agents/opportunity.py` | yes | pro → **flash** (candidate) | ⏳ deferred | Bulk research is flash-able; validate in the workstream (paired with FitScoring in same file) |
-| `ComplianceCalendarAgent` | `agents/calendar.py` | **No → deterministic** (candidate) | flash today | ⏳ deferred | Cert→obligation mapping is rule-based; converting to deterministic is a refactor, not a tier flip |
+| `ComplianceCalendarAgent` | ~~`agents/calendar.py`~~ → `services/obligations.py` | **No → deterministic** | n/a (no LLM) | ✅ applied (converted) | Cert→obligation mapping is rule-based; now a pure `derive_compliance_obligations` service (no `get_llm`, no `AgentRun`) — same output shape, `obligation_sync` unchanged |
 
 ## New agents (created in their workstreams, not now)
 - **Budget-rule translator** (WS1) — NL budget → Stripe `spending_controls`. Tier: **flash**.
@@ -30,8 +30,10 @@
 ## Applied in Phase 0
 - 4 `pro → flash` downgrades (above). Verified: `test_provider_routing.py` unaffected (it tests tier→provider routing, not agent tiers); `make test` green.
 
-## Deferred to workstreams (behavior-changing refactors → go through the QA/security gate)
-- `ComplianceCalendarAgent` → deterministic service.
-- `OpportunityResearchAgent` → flash for the bulk-research portion (disambiguate from `FitScoringAgent` in the same module).
-- Add `ModelTier.bulk` + `GEMINI_MODEL_BULK` when WS2's discovery workload lands.
+## Applied in production-hardening (behavior-changing refactors → through the QA/security gate)
+- ✅ `ComplianceCalendarAgent` → deterministic `derive_compliance_obligations` service (removed the LLM agent + `agents/calendar.py`).
+- ✅ `OpportunityResearchAgent` → **flash** for the bulk-research portion (`FitScoringAgent` stays **pro**; they share `agents/opportunity.py`).
+
+## Deferred to workstreams
+- Add `ModelTier.bulk` + `GEMINI_MODEL_BULK` when WS2's discovery workload lands. *(done in WS2.)*
 - Vertex provider path (deferred with deployment).

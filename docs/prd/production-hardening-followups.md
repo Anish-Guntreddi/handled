@@ -11,7 +11,7 @@
 - **[low] production-LLM prompt-injection coverage** — the hard invariant holds (eligibility-critical fields are `user_overrides`-locked; agent output is a strict schema with no tool/exfil channel; untrusted excerpts are now fenced). Residual: non-locked inferred fields that drive matching (`naics_guesses`, `funding_categories`, `capability_statement`) remain steerable by crafted "facts" in production Gemini mode (RAG data-poisoning, not escalation/exfil). Add a real-LLM injection eval when WS5 RAG lands.
 
 ## From the WS0 agent-fleet inventory (deferred by design)
-- `ComplianceCalendarAgent` → convert to a deterministic service (currently flash).
+- ✅ **done** — `ComplianceCalendarAgent` converted to a deterministic service (`services/obligations.py::derive_compliance_obligations`); the LLM agent + `agents/calendar.py` are gone. Same output shape, `obligation_sync` behavior unchanged, no token spend / provider dependency.
 - `OpportunityResearchAgent` → flash for the bulk-research portion (disambiguate from `FitScoringAgent` in the same module).
 - **Vertex provider swap** — deferred with deployment; flip `GEMINI_BACKEND=vertex` (ADC on `captureos-prod`) before production. (`ModelTier.bulk` was added in WS2.)
 
