@@ -11,6 +11,7 @@ from captureos.models.billing import (
 )
 from captureos.models.company import CompanyProfile
 from captureos.models.corpus import CorpusChunk, CorpusDocument
+from captureos.models.corpus_discovery import CorpusDiscoveryRun
 from captureos.models.documents import Document, DocumentChunk
 from captureos.models.entitlement import Entitlement
 from captureos.models.evidence import EvidenceItem, Source
@@ -45,6 +46,7 @@ __all__ = [
     "CompanyProfile",
     "CorpusChunk",
     "CorpusDocument",
+    "CorpusDiscoveryRun",
     "Document",
     "DocumentChunk",
     "Entitlement",

@@ -67,6 +67,10 @@ worker: ## Run the worker locally
 seed: ## Seed demo data
 	cd $(API_DIR) && uv run python -m captureos.scripts.seed
 
+.PHONY: corpus-sync
+corpus-sync: ## Run one corpus sync + embed pass (WS2 knowledge engine; a cron calls this on deploy)
+	cd $(API_DIR) && uv run python -m captureos.corpus.sync && uv run python -m captureos.corpus.embed
+
 # ---------- Frontend (web) ----------
 .PHONY: web-install
 web-install: ## Install frontend deps
