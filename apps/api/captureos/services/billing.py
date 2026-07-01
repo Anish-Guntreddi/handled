@@ -281,7 +281,15 @@ async def apply_webhook(session: AsyncSession, event: dict) -> bool:
     org.plan = product
     _mark_processed(session, org.id, event.get("event_id"), "checkout.completed")
 
-    await session.flush()
+    try:
+        await session.flush()
+    except IntegrityError:
+        # A concurrent double-delivery of this checkout won the race between the idempotency
+        # pre-check above and this flush. The unique constraint on ``RevenueRecord.external_id``
+        # already prevented a double-grant, so the loser is a clean no-op (never a 500 →
+        # avoids a spurious Stripe retry). Mirrors the subscription path's guard.
+        await session.rollback()
+        return False
     await record_event(
         "billing.payment_succeeded",
         org_id=org.id,
