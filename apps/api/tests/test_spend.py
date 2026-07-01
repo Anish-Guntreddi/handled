@@ -7,14 +7,18 @@ tests cover exactly what runs in production minus the Stripe signature scheme.
 
 from __future__ import annotations
 
+import asyncio
 import json
 
 import pytest
 from httpx import AsyncClient
 
 from captureos.config import get_settings
+from captureos.db.session import session_scope
 from captureos.providers import get_notifier
+from captureos.providers.base import IssuingAuthorization
 from captureos.providers.issuing import MockIssuing
+from captureos.services.spend import decide_authorization
 from tests.conftest import auth_headers, register
 
 pytestmark = pytest.mark.asyncio
@@ -250,6 +254,54 @@ async def test_replayed_authorization_is_idempotent(client: AsyncClient) -> None
     ).json()
     replayed = [a for a in auths if a["stripeAuthId"] == "iauth_replay"]
     assert len(replayed) == 1
+
+
+# --------------------------------------------------------------------------- TOCTOU serialization
+async def test_concurrent_authorizations_cannot_exceed_budget(client: AsyncClient) -> None:
+    """TOCTOU guard: two swipes on the SAME budget fired concurrently in OVERLAPPING transactions
+    must serialize on the governing budget row, so their combined APPROVED spend can never bust
+    limit_cents. Exactly one $300 charge fits under the $500/mo cap; the other must decline.
+
+    Without the ``SELECT ... FOR UPDATE`` on the budget, both transactions read the same pre-insert
+    total ($0) and both approve — totalling $600 over a $500 cap. The row lock makes the second
+    swipe block until the first commits, then re-read the now-$300 total and decline.
+    """
+    headers, org_id = await _setup(client, "spend-race@example.com")
+    card = await _provision_card(client, headers, org_id, phone="+15551234567")
+    await _set_budget(client, headers, org_id, "Up to $500/mo on software")
+    card_id = card["stripeCardId"]
+
+    async def _decide(auth_id: str) -> object:
+        # Each decision runs in its OWN session/transaction (like two concurrent webhook workers),
+        # so the two overlap and actually contend on the budget lock.
+        async with session_scope() as session:
+            return await decide_authorization(
+                session,
+                IssuingAuthorization(
+                    stripe_auth_id=auth_id,
+                    amount_cents=30000,
+                    stripe_card_id=card_id,
+                    category="software",
+                ),
+            )
+
+    d1, d2 = await asyncio.gather(_decide("iauth_race_1"), _decide("iauth_race_2"))
+
+    # Exactly one approved + one over-budget decline — never both approved (which would be $600).
+    assert sorted([d1.decision, d2.decision]) == ["approved", "declined"]  # type: ignore[attr-defined]
+    approved = d1 if d1.approved else d2  # type: ignore[attr-defined]
+    declined = d2 if d1.approved else d1  # type: ignore[attr-defined]
+    assert approved.reason == "within_budget"  # type: ignore[attr-defined]
+    assert declined.reason == "over_budget"  # type: ignore[attr-defined]
+
+    # Persisted audit rows agree: total APPROVED spend stays within the $500 cap.
+    auths = (
+        await client.get(f"/api/v1/orgs/{org_id}/spend/authorizations", headers=headers)
+    ).json()
+    race = [a for a in auths if a["stripeAuthId"].startswith("iauth_race_")]
+    assert len(race) == 2
+    approved_total = sum(a["amountCents"] for a in race if a["decision"] == "approved")
+    assert approved_total == 30000  # only one $300 swipe approved; never $600
 
 
 async def test_budget_totals_accumulate_across_swipes(client: AsyncClient) -> None:

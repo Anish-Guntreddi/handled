@@ -292,6 +292,19 @@ async def _evaluate(
     if budget.interval == SpendInterval.per_authorization.value:
         within = event.amount_cents <= budget.limit_cents
     else:
+        # Serialize concurrent authorizations governed by the SAME budget: take a
+        # transaction-scoped row lock on the governing budget BEFORE totalling prior spend, so the
+        # spent-total read and the approval insert are atomic per budget. Without this, two
+        # concurrent swipes could both read the pre-insert total and both be approved, busting
+        # limit_cents (TOCTOU). A row lock is ample for the ~2s decision window; charges on
+        # different budgets lock different rows and never contend. Org-scoped like every hot-path
+        # read, so a caller can never lock another tenant's budget.
+        await session.execute(
+            select(SpendBudget.id)
+            .where(SpendBudget.org_id == org_id)
+            .where(SpendBudget.id == budget.id)
+            .with_for_update()
+        )
         window_start = _interval_start(budget.interval, datetime.now(UTC))
         spent = await _spend_so_far(session, org_id, budget, window_start)
         within = spent + event.amount_cents <= budget.limit_cents
