@@ -163,16 +163,24 @@ class GeneratedDocument(UUIDPKMixin, OrgScopedMixin, TimestampMixin, Base):
 class Approval(UUIDPKMixin, OrgScopedMixin, TimestampMixin, Base):
     __tablename__ = "approvals"
 
-    filing_id: Mapped[uuid.UUID] = mapped_column(
+    # Nullable so payment_event approvals can omit filing_id (FR-GD-5 reuse).
+    filing_id: Mapped[uuid.UUID | None] = mapped_column(
         PGUUID(as_uuid=True),
         ForeignKey("filings.id", ondelete="CASCADE"),
-        nullable=False,
+        nullable=True,
+        index=True,
+    )
+    # Set when target='payment_event'; filing_id is null in that case.
+    payment_event_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("payment_events.id", ondelete="CASCADE"),
+        nullable=True,
         index=True,
     )
     target: Mapped[str] = mapped_column(
-        String(16), nullable=False, default=ApprovalTarget.recommendation.value
+        String(32), nullable=False, default=ApprovalTarget.recommendation.value
     )
-    approver_user_id: Mapped[uuid.UUID] = mapped_column(
+    approver_user_id: Mapped[uuid.UUID | None] = mapped_column(
         PGUUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
     decision: Mapped[str] = mapped_column(
@@ -180,4 +188,4 @@ class Approval(UUIDPKMixin, OrgScopedMixin, TimestampMixin, Base):
     )
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    filing: Mapped[Filing] = relationship(back_populates="approvals")
+    filing: Mapped[Filing | None] = relationship(back_populates="approvals")
