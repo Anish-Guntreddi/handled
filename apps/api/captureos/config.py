@@ -18,6 +18,11 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # In containers this path won't exist; real env vars are used instead.
 _ROOT_ENV = Path(__file__).resolve().parents[3] / ".env"
 
+# The mock Issuing HMAC secret ships as a PUBLIC default so the offline/CI hot path is fully
+# exercisable with no credentials. Precisely because it is public it authenticates nothing in a
+# deployed env — ``_guard_production_secrets`` fails closed if a prod-like env is left on it.
+_DEFAULT_ISSUING_MOCK_SECRET = "whsec_issuing_mock_dev_do_not_use_in_prod"  # noqa: S105
+
 
 class AppEnv(StrEnum):
     local = "local"
@@ -179,7 +184,8 @@ class Settings(BaseSettings):
     # secret, so the deterministic hot path can be exercised offline (CI) with real signature
     # verification + fail-closed rejection of forged calls — no Stripe credentials required. It is
     # a server-side secret like any other; a caller without it cannot forge a valid authorization.
-    issuing_mock_secret: str = "whsec_issuing_mock_dev_do_not_use_in_prod"  # noqa: S105
+    # In prod-like envs the public default is rejected at startup (see _guard_production_secrets).
+    issuing_mock_secret: str = _DEFAULT_ISSUING_MOCK_SECRET
 
     @property
     def issuing_webhook_secret(self) -> str | None:
@@ -336,6 +342,19 @@ class Settings(BaseSettings):
                 raise ValueError(
                     "STRIPE_ISSUING_WEBHOOK_SECRET (or STRIPE_WEBHOOK_SECRET) required "
                     "when STRIPE_ISSUING_ENABLED=true"
+                )
+            # Fail closed: with Issuing DISABLED the (still-mounted) /webhooks/stripe/issuing
+            # route falls back to MockIssuing, which verifies HMAC against ISSUING_MOCK_SECRET.
+            # Left at the PUBLIC default, anyone could forge an approve/decline on a card swipe.
+            # In a deployed env either enable real Issuing (above) or set a private mock secret.
+            elif (
+                not self.stripe_issuing_enabled
+                and self.issuing_mock_secret == _DEFAULT_ISSUING_MOCK_SECRET
+            ):
+                raise ValueError(
+                    "STRIPE_ISSUING_ENABLED=true with a real STRIPE_ISSUING_WEBHOOK_SECRET "
+                    "(or a non-default ISSUING_MOCK_SECRET) is required in production; the default "
+                    "mock Issuing secret is public and cannot authenticate card authorizations"
                 )
             # Fail closed: mock billing has no payment verification, so it must never run in a
             # deployed env, and a real Stripe webhook must be signature-verifiable (CON-4).
