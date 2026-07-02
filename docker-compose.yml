@@ -58,10 +58,16 @@ services:
   web:
     build:
       context: ./apps/web
+      # NEXT_PUBLIC_* must be build args — Next.js inlines them into the client
+      # bundle at build time (runtime env below is a harmless belt-and-braces).
+      args:
+        NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
+        NEXT_PUBLIC_AUTH_PROVIDER: local
     container_name: captureos-web
     environment:
       NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
       NEXT_PUBLIC_AUTH_PROVIDER: local
+      NODE_ENV: production
     ports:
       - "3000:3000"
     depends_on:

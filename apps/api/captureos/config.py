@@ -14,9 +14,12 @@ from pathlib import Path
 from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# Load the repo-root .env regardless of CWD (the app/alembic run from apps/api).
-# In containers this path won't exist; real env vars are used instead.
-_ROOT_ENV = Path(__file__).resolve().parents[3] / ".env"
+# Load the repo-root .env regardless of CWD (the app/alembic run from apps/api → 3 up).
+# In containers the code sits at a shallower path (/app/captureos/config.py) and real env
+# vars are injected instead, so guard the index: a too-shallow layout must resolve to a
+# harmless missing path, never IndexError at import time.
+_parents = Path(__file__).resolve().parents
+_ROOT_ENV = (_parents[3] if len(_parents) > 3 else _parents[-1]) / ".env"
 
 # The mock Issuing HMAC secret ships as a PUBLIC default so the offline/CI hot path is fully
 # exercisable with no credentials. Precisely because it is public it authenticates nothing in a
