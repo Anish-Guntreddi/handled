@@ -61,7 +61,7 @@ class PaymentRequiredError(AppError):
 
 class ValidationFailed(AppError):
     code = "validation_error"
-    status_code = status.HTTP_422_UNPROCESSABLE_ENTITY
+    status_code = status.HTTP_422_UNPROCESSABLE_CONTENT
 
 
 def _body(code: str, message: str, details: Any = None) -> dict:
@@ -81,7 +81,7 @@ def register_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(RequestValidationError)
     async def _validation_error(_: Request, exc: RequestValidationError) -> JSONResponse:
         return JSONResponse(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             content=_body("validation_error", "Request validation failed", exc.errors()),
         )
 
