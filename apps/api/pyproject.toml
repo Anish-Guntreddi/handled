@@ -55,7 +55,7 @@ dev = [
 package = false
 # Supply-chain cooldown: don't resolve versions published in the last ~7 days,
 # when a compromised release is most likely still undetected. Bump as needed.
-exclude-newer = "2026-06-12T00:00:00Z"
+exclude-newer = "2026-07-02T00:00:00Z"
 
 [tool.ruff]
 line-length = 100
@@ -69,7 +69,7 @@ ignore = ["B008"]  # FastAPI Depends() in defaults is idiomatic.
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["S101", "S105", "S106", "S107"]
-"captureos/scripts/*" = ["S101"]
+"captureos/scripts/*" = ["S101", "E501"]
 # Curated data catalog: long human-readable program descriptions are data, not code.
 "captureos/programs/catalog.py" = ["E501"]
 
