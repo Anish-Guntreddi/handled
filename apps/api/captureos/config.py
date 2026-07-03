@@ -117,7 +117,7 @@ class Settings(BaseSettings):
     run_migrations_on_start: bool = False
 
     # ---- LLM ----
-    llm_provider: LLMProviderName = LLMProviderName.mock
+    llm_provider: LLMProviderName = LLMProviderName.gemini
     gemini_api_key: str | None = None
     gemini_model_pro: str = "gemini-2.5-pro"
     gemini_model_flash: str = "gemini-2.5-flash"
@@ -150,7 +150,7 @@ class Settings(BaseSettings):
         return {p for p in candidates if p is not None}
 
     # ---- Embeddings ----
-    embeddings_provider: EmbeddingsProviderName = EmbeddingsProviderName.mock
+    embeddings_provider: EmbeddingsProviderName = EmbeddingsProviderName.gemini
     # gemini-embedding-001 is the current GA model (text-embedding-004 is retiring); it supports
     # Matryoshka output dims, so 768 keeps the existing pgvector schema with no migration.
     embedding_model: str = "gemini-embedding-001"
