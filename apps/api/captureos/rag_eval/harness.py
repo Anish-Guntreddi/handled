@@ -87,7 +87,11 @@ async def run_eval(
 
     results: list[RagEvalResult] = []
     for query in queries:
-        retrieved = await retriever.retrieve(session, query.query_text, k=k)
+        # Reuse the cached query vector (embedded once at golden-set build time) so a re-run
+        # over a dataset burns ZERO embed quota; ``None`` falls back to embedding in the retriever.
+        retrieved = await retriever.retrieve(
+            session, query.query_text, k=k, query_vector=query.embedding
+        )
         for chunk in retrieved:
             grade = relevance.get((str(query.id), str(chunk.corpus_chunk_id)), 0)
             row = RagEvalResult(

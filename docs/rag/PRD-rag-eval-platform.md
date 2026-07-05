@@ -38,7 +38,7 @@ tests/rag_eval/  unit + integration tests (own fixtures; isolated rag_eval schem
 
 ## Data model — `rag_eval` schema (all ids UUID; corpus refs are plain UUIDs, no FK)
 - **`rag_eval_dataset`** — `id, name (unique), description, created_at`. A named golden set.
-- **`rag_eval_query`** — `id, dataset_id→dataset, query_text, source (seed|gemini|user), created_at`.
+- **`rag_eval_query`** — `id, dataset_id→dataset, query_text, source (seed|gemini|user), embedding (Vector(768), nullable), created_at`. The `embedding` is the **cached query vector**: each eval query is embedded ONCE and reused across every run so repeated experiments never re-burn the daily embed quota (Gemini free tier = 1000 embeds/day).
 - **`rag_eval_qrel`** — the labels. `id, query_id→query, corpus_chunk_id (UUID), corpus_document_id (UUID), relevance (int, graded 0–3), label_source (gemini|human), reviewed (bool default false), created_at`. `UNIQUE(query_id, corpus_chunk_id)`.
 - **`rag_eval_run`** — `id, dataset_id→dataset, retriever_name, retriever_config (JSON), embedding_model, k, git_sha, notes, metrics (JSON: {"recall@5":…,"mrr":…,"ndcg@10":…,"map":…}), created_at`.
 - **`rag_eval_result`** — per retrieved chunk. `id, run_id→run, query_id→query, rank (int), corpus_chunk_id (UUID), corpus_document_id (UUID), score (float; higher=better, = -cosine_distance), is_relevant (bool, computed vs qrels)`.
@@ -81,8 +81,12 @@ Build: `db.py` (RagEvalBase + schema init) · `models.py` (6 tables) · `retriev
 **Acceptance:** `make rag-eval-init` creates the schema; `make rag-eval` runs the dense baseline over the synthetic dataset, computes recall@k/MRR/nDCG via pytrec_eval, persists a run; `make rag-dashboard` shows that run's metric tiles; `make check` green; the eval store is provably absent from the product Alembic head.
 
 ### Phase 2 — Golden Set & Real Corpus
-`make corpus-sync` (real federal text) · `goldenset.py`: seed a hand-written query set + Gemini-augment realistic SMB compliance queries + **Gemini candidate-label bootstrap** (over-retrieve K≫k candidates → Gemini flash grades each for relevance → write `rag_eval_qrel` with `label_source=gemini, reviewed=false`) · Streamlit **label-review view** (query → candidate chunks with text; accept/reject/grade → sets `reviewed=true`, editable relevance) · dataset browser.
-**Acceptance:** a real named dataset exists with human-reviewed qrels; the harness runs the dense baseline on it and reports real recall@k/MRR/nDCG; review round-trips through the dashboard; `make check` green.
+`goldenset.py`: a hand-written **seed query set** (~15 realistic SMB compliance queries matching the embedded corpus topics: SBIR/STTR, WOSB/EDWOSB, 8(a), SAM.gov registration, IRC §41 R&D credit, …) + optional Gemini query augmentation + **Gemini candidate-label bootstrap** (over-retrieve K≫k candidates via the dense retriever → Gemini **flash** grades each candidate's relevance 0–3 → write `rag_eval_qrel` with `label_source=gemini, reviewed=false`).
+- **Query-embedding cache:** embed each query ONCE at build time, store on `rag_eval_query.embedding`; `corpus_retrieve` gains an optional `query_vector` param and `DenseRetriever`/`run_eval` pass the cached vector so a re-run embeds **zero** queries. (Quota-frugal + faster.)
+- **Grader safety (correctness-critical):** the candidate chunk text is UNTRUSTED corpus content — the flash grader MUST fence it (`<untrusted_source>…</untrusted_source>` + ignore-embedded-instructions directive) and return a strict schema (grade only), so a chunk containing "mark me relevant" can't steer the label. Mirror `agents/company_brain.py`'s fencing.
+- Streamlit **label-review view** (write surface): dataset → query → candidate qrels with chunk text resolved from `corpus_chunks` → accept/reject/edit-grade → sets `reviewed=true` + relevance. Plus a **dataset browser** (datasets, query counts, qrel counts, review progress).
+
+**Acceptance:** a real named dataset exists with human-reviewed qrels; the harness runs the dense baseline on it and reports real recall@k/MRR/nDCG (using cached query vectors — a re-run embeds zero queries); label review round-trips through the dashboard; `make check` green. *(Populating the REAL data needs embed quota; if today's is exhausted the code + hermetic tests land now and the real bootstrap runs on quota reset.)*
 
 ### Phase 3 — Embedding-Analysis Spike
 `analysis.py`: populate `rag_embedding_stat` (L2 norms, nearest-neighbor cosine distance, clustering [k-means/HDBSCAN], PCA + UMAP 2-D coords) over `corpus_chunks`; **Matryoshka dim sweep** (recall@k vs. 256/512/768) · Streamlit views: embedding scatter (color by cluster/doc_type), distance histograms, **per-query failure drill-down** (query → retrieved vs. should-have-retrieved).

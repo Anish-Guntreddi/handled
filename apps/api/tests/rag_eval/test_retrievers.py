@@ -7,7 +7,13 @@ import uuid
 from dataclasses import dataclass
 
 import pytest
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from captureos.ingestion import corpus_retrieval
+from captureos.ingestion.corpus_retrieval import corpus_retrieve
+from captureos.models.corpus import CorpusChunk, CorpusDocument
+from captureos.models.enums import CorpusAuthority, CorpusDocType
+from captureos.providers import get_embeddings
 from captureos.rag_eval import retrievers
 from captureos.rag_eval.retrievers import (
     DenseRetriever,
@@ -31,13 +37,16 @@ def _patch_corpus_retrieve(
     """Replace ``corpus_retrieve`` with an async stub returning ``rows``; record its kwargs."""
     captured: dict = {}
 
-    async def _fake(session, query_text, *, k, doc_type, jurisdiction, current_only):
+    async def _fake(
+        session, query_text, *, k, doc_type, jurisdiction, current_only, query_vector=None
+    ):
         captured.update(
             query_text=query_text,
             k=k,
             doc_type=doc_type,
             jurisdiction=jurisdiction,
             current_only=current_only,
+            query_vector=query_vector,
         )
         return rows
 
@@ -92,6 +101,8 @@ async def test_dense_retriever_forwards_config_filters(
         "doc_type": "regulation",
         "jurisdiction": "federal",
         "current_only": False,
+        # No cached vector passed -> None, so the retriever embeds as before.
+        "query_vector": None,
     }
 
 
@@ -106,6 +117,99 @@ async def test_dense_retriever_current_only_defaults_true(
     assert captured["current_only"] is True
     assert captured["doc_type"] is None
     assert captured["jurisdiction"] is None
+
+
+async def test_dense_retriever_forwards_query_vector(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A per-call cached vector is passed straight through to ``corpus_retrieve``."""
+    captured = _patch_corpus_retrieve(monkeypatch, [])
+    cached = [0.1, 0.2, 0.3]
+
+    await DenseRetriever(config={}).retrieve(object(), "q", k=5, query_vector=cached)
+
+    assert captured["query_vector"] == cached
+
+
+# --- DB-backed tests for the cache seam in ``corpus_retrieve`` (uses the product corpus tables,
+# reachable via the ``rag_eval_session`` fixture; mock embeddings only). ------------------------
+
+
+async def _seed_one_chunk(session: AsyncSession, text: str) -> tuple[CorpusChunk, list[float]]:
+    """Insert one current-law corpus chunk embedded with the mock provider; return (chunk, vec)."""
+    vec = (await get_embeddings().embed([text])).vectors[0]
+    doc = CorpusDocument(
+        authority=CorpusAuthority.sba,
+        doc_type=CorpusDocType.guidance,
+        jurisdiction="federal",
+        title="cache-test doc",
+        external_id=f"cache-test-{uuid.uuid4()}",
+        citation_label="cache-test",
+        is_current=True,
+        content_hash=str(uuid.uuid4()),
+    )
+    session.add(doc)
+    await session.flush()
+    chunk = CorpusChunk(
+        corpus_document_id=doc.id,
+        ordinal=0,
+        text=text,
+        locator="chunk 0",
+        content_hash=str(uuid.uuid4()),
+        doc_type=CorpusDocType.guidance,
+        jurisdiction="federal",
+        is_current=True,
+        embedding=vec,
+    )
+    session.add(chunk)
+    await session.flush()
+    return chunk, vec
+
+
+async def test_corpus_retrieve_query_vector_skips_embedding(
+    rag_eval_session: AsyncSession, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When a ``query_vector`` is supplied, ``corpus_retrieve`` must NOT call ``get_embeddings``
+    and must still return the nearest chunk (proves the cached-vector fast path)."""
+    chunk, vec = await _seed_one_chunk(
+        rag_eval_session, "SBIR federal R&D grant for small business"
+    )
+
+    def _boom(*_a: object, **_k: object) -> object:
+        raise AssertionError("get_embeddings must not be called when query_vector is provided")
+
+    monkeypatch.setattr(corpus_retrieval, "get_embeddings", _boom)
+
+    rows = await corpus_retrieve(
+        rag_eval_session, "text that is never embedded", k=5, query_vector=vec
+    )
+
+    assert [c.id for c, _d in rows] == [chunk.id]
+
+
+async def test_corpus_retrieve_embeds_when_no_vector(
+    rag_eval_session: AsyncSession, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Backward compat: with no ``query_vector`` the query text is embedded exactly as before
+    (embed called once), so existing callers are unaffected."""
+    chunk, _vec = await _seed_one_chunk(rag_eval_session, "women-owned small business set-aside")
+
+    calls: list[list[str]] = []
+    real = get_embeddings()
+
+    class _SpyEmbeddings:
+        async def embed(self, texts: list[str]) -> object:
+            calls.append(texts)
+            return await real.embed(texts)
+
+    monkeypatch.setattr(corpus_retrieval, "get_embeddings", lambda: _SpyEmbeddings())
+
+    rows = await corpus_retrieve(
+        rag_eval_session, "women-owned small business set-aside", k=5
+    )
+
+    assert calls == [["women-owned small business set-aside"]]
+    assert [c.id for c, _d in rows] == [chunk.id]
 
 
 def test_build_retriever_returns_dense() -> None:

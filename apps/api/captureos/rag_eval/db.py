@@ -72,6 +72,24 @@ async def init_rag_eval_schema() -> None:
         await conn.run_sync(RagEvalBase.metadata.create_all)
 
 
+async def reset_rag_eval_schema() -> None:
+    """Dev-only: DROP the ``rag_eval`` schema CASCADE and recreate it fresh.
+
+    Destructive but safe here — the eval store holds nothing that isn't regenerable (golden sets
+    are rebuilt via ``build_golden_dataset``/``bootstrap_labels``, runs are re-run). Needed when
+    the eval table shape changes (e.g. the added ``rag_eval_query.embedding`` cache column):
+    ``create_all`` is ``checkfirst`` and will NOT alter an existing table, so a shape change
+    requires a drop+recreate. Never touches the product ``public`` schema; scoped to ``rag_eval``.
+    """
+    from captureos.rag_eval import models  # noqa: F401  (registers eval tables on RagEvalBase)
+
+    engine = get_engine()
+    async with engine.begin() as conn:
+        await conn.execute(text(f"DROP SCHEMA IF EXISTS {RAG_EVAL_SCHEMA} CASCADE"))
+        await conn.execute(text(f"CREATE SCHEMA {RAG_EVAL_SCHEMA}"))
+        await conn.run_sync(RagEvalBase.metadata.create_all)
+
+
 @asynccontextmanager
 async def rag_eval_session_scope() -> AsyncIterator[AsyncSession]:
     """AsyncSession helper for the dev-only eval store.

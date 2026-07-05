@@ -39,7 +39,12 @@ class Retriever(Protocol):
     config: dict
 
     async def retrieve(
-        self, session: AsyncSession, query_text: str, *, k: int
+        self,
+        session: AsyncSession,
+        query_text: str,
+        *,
+        k: int,
+        query_vector: list[float] | None = None,
     ) -> list[RetrievedChunk]: ...
 
 
@@ -48,13 +53,21 @@ class DenseRetriever:
     """Dense pgvector baseline: wraps ``corpus_retrieve`` and maps its
     ``(CorpusChunk, cosine_distance)`` rows to ``RetrievedChunk`` (``score = -distance``,
     ``rank`` = 0-based enumerate). Reads ``doc_type``/``jurisdiction``/``current_only``
-    from ``config`` (``current_only`` defaults to ``True``, matching current-law search)."""
+    from ``config`` (``current_only`` defaults to ``True``, matching current-law search).
+
+    An optional per-call ``query_vector`` (the harness's cached ``rag_eval_query.embedding``)
+    is forwarded to ``corpus_retrieve`` so a re-run reuses the vector instead of re-embedding."""
 
     config: dict = field(default_factory=dict)
     name: str = "dense"
 
     async def retrieve(
-        self, session: AsyncSession, query_text: str, *, k: int
+        self,
+        session: AsyncSession,
+        query_text: str,
+        *,
+        k: int,
+        query_vector: list[float] | None = None,
     ) -> list[RetrievedChunk]:
         rows = await corpus_retrieve(
             session,
@@ -63,6 +76,7 @@ class DenseRetriever:
             doc_type=self.config.get("doc_type"),
             jurisdiction=self.config.get("jurisdiction"),
             current_only=self.config.get("current_only", True),
+            query_vector=query_vector,
         )
         return [
             RetrievedChunk(

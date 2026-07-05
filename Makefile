@@ -88,9 +88,21 @@ corpus-schedule-once: ## Run whatever corpus cadence tiers are due now, then exi
 rag-eval-init: ## Create the dev-only rag_eval schema + tables (create_all, not Alembic)
 	cd $(API_DIR) && uv run --group rag-eval python -m captureos.rag_eval.cli init
 
+.PHONY: rag-eval-reset
+rag-eval-reset: ## DROP the dev-only rag_eval schema CASCADE + recreate (regenerable eval data)
+	cd $(API_DIR) && uv run --group rag-eval python -m captureos.rag_eval.cli reset
+
 .PHONY: rag-eval-seed
 rag-eval-seed: ## Seed the synthetic-smoke golden set (idempotent)
 	cd $(API_DIR) && uv run --group rag-eval python -m captureos.rag_eval.cli seed
+
+.PHONY: rag-golden-build
+rag-golden-build: ## Build/extend the real SMB-compliance golden set (embeds each new query once)
+	cd $(API_DIR) && uv run --group rag-eval python -m captureos.rag_eval.cli golden-build --name $${NAME:-gov-smb-golden}
+
+.PHONY: rag-golden-bootstrap
+rag-golden-bootstrap: ## Gemini-bootstrap candidate qrels for the golden set (then human-review in the dashboard)
+	cd $(API_DIR) && uv run --group rag-eval python -m captureos.rag_eval.cli golden-bootstrap --dataset $${NAME:-gov-smb-golden} --candidate-k $${CANDIDATE_K:-30}
 
 .PHONY: rag-eval
 rag-eval: ## Run the dense baseline over the synthetic-smoke dataset and persist a scored run

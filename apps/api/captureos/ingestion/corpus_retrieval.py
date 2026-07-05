@@ -22,12 +22,23 @@ async def corpus_retrieve(
     doc_type: str | None = None,
     jurisdiction: str | None = None,
     current_only: bool = True,
+    query_vector: list[float] | None = None,
 ) -> list[tuple[CorpusChunk, float]]:
-    """Semantic search over the global corpus. Defaults to current law (`is_current`)."""
+    """Semantic search over the global corpus. Defaults to current law (`is_current`).
+
+    Still org-less and still queries ONLY ``corpus_chunks`` — the tenant-isolation fact is
+    unchanged. ``query_vector`` is an optional precomputed query embedding: when supplied the
+    query is NOT re-embedded and the vector is used directly (the dev-only eval harness passes
+    its cached ``rag_eval_query.embedding`` so repeated runs never re-burn embed quota); when
+    ``None`` the behavior is exactly as before — ``query_text`` is embedded here.
+    """
     if not query_text.strip():
         return []
-    embedding = await get_embeddings().embed([query_text])
-    query_vec = embedding.vectors[0]
+    if query_vector is None:
+        embedding = await get_embeddings().embed([query_text])
+        query_vec = embedding.vectors[0]
+    else:
+        query_vec = query_vector
     distance = CorpusChunk.embedding.cosine_distance(query_vec)
     stmt = select(CorpusChunk, distance.label("distance")).where(CorpusChunk.embedding.is_not(None))
     if current_only:

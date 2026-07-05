@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import uuid
 
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     Boolean,
     Float,
@@ -24,6 +25,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
+from captureos.models.documents import EMBEDDING_DIM
 from captureos.rag_eval.db import (
     RagEvalBase,
     RagEvalTimestampMixin,
@@ -54,6 +56,10 @@ class RagEvalQuery(RagEvalUUIDPKMixin, RagEvalTimestampMixin, RagEvalBase):
     query_text: Mapped[str] = mapped_column(Text, nullable=False)
     # Provenance of the query: "seed" | "gemini" | "user".
     source: Mapped[str] = mapped_column(String(16), nullable=False, default="seed")
+    # Cached query embedding: each eval query is embedded ONCE at golden-set build time and
+    # reused across every run/bootstrap, so repeated experiments never re-burn the scarce
+    # Gemini free-tier embed quota. Nullable so a query can exist before it is embedded.
+    embedding: Mapped[list[float] | None] = mapped_column(Vector(EMBEDDING_DIM), nullable=True)
 
 
 class RagEvalQrel(RagEvalUUIDPKMixin, RagEvalTimestampMixin, RagEvalBase):
