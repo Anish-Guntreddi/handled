@@ -15,13 +15,23 @@ Pages (sidebar selector):
 * **Datasets** (read-only) — datasets with query/qrel counts and review progress.
 * **Label Review** (WRITE) — pick a dataset → query → grade/accept candidate qrels; on submit,
   UPDATE ``rag_eval.rag_eval_qrel`` (relevance + reviewed) via **bound parameters only**.
+* **Embedding Analysis** (P3, read-only) — pick a ``rag_embedding_stat`` snapshot → 2-D PCA/t-SNE
+  scatter (colored by cluster / doc_type), L2-norm + NN-distance histograms, cluster summary.
+* **Failure Drill-down** (P3, read-only) — pick a run → per query, the retrieved chunks vs. the
+  relevant (should-have-retrieved) chunks, flagging misses and false hits.
 
-All writes are parametrized (never string-formatted SQL) and scoped to ``rag_eval.*``.
+The two P3 pages read ONLY: ``rag_eval.rag_embedding_stat`` / ``rag_eval.rag_eval_result`` /
+``rag_eval.rag_eval_qrel`` (+ their eval joins), with a READ-ONLY join to ``public.corpus_chunks``
+to resolve chunk text. They never write. All writes (label review only) are parametrized (never
+string-formatted SQL) and scoped to ``rag_eval.*``.
 """
 
 from __future__ import annotations
 
 import json
+import math
+from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Any
 
 import pandas as pd
@@ -89,6 +99,101 @@ def _metrics_dict(value: Any) -> dict[str, Any]:
 
 def _fmt_metric(value: Any) -> str:
     return f"{value:.3f}" if isinstance(value, (int, float)) else "—"
+
+
+def cluster_label(value: Any) -> str:
+    """Format a ``cluster_id`` into a stable display label.
+
+    ``cluster_id`` is nullable (unclustered chunks) and pandas surfaces the nullable integer
+    column as a float (e.g. ``3.0``) with ``NaN`` for nulls. This normalizes both to a categorical
+    string: ``None``/``NaN`` → ``"unclustered"``, any real id → its plain integer form (``"3"``),
+    so it can key a color scale or a summary table deterministically.
+    """
+    if value is None:
+        return "unclustered"
+    try:
+        as_float = float(value)
+    except (TypeError, ValueError):
+        return str(value)
+    if math.isnan(as_float):
+        return "unclustered"
+    return str(int(as_float))
+
+
+def cluster_size_summary(cluster_ids: Sequence[Any]) -> list[tuple[str, int]]:
+    """Count chunks per cluster → ``[(label, size)]`` sorted by size desc, then label asc.
+
+    Nulls bucket under ``"unclustered"`` (see :func:`cluster_label`). Pure/DB-free so the
+    cluster-size table is unit-testable without a database.
+    """
+    counts: dict[str, int] = {}
+    for cid in cluster_ids:
+        label = cluster_label(cid)
+        counts[label] = counts.get(label, 0) + 1
+    return sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+
+
+def histogram_buckets(values: Sequence[Any], *, bins: int = 20) -> list[tuple[str, int]]:
+    """Bucket numeric ``values`` into ``bins`` equal-width buckets → ``[(left_edge, count)]``.
+
+    ``None``/``NaN`` values are dropped (e.g. ``nn1_distance`` is nullable). Returns an empty list
+    when there is no finite data. When all values are equal, returns a single bucket. Pure/DB-free
+    so the histogram is unit-testable and avoids a numpy dependency in the dashboard layer.
+    """
+    clean: list[float] = []
+    for value in values:
+        if value is None:
+            continue
+        try:
+            as_float = float(value)
+        except (TypeError, ValueError):
+            continue
+        if math.isnan(as_float):
+            continue
+        clean.append(as_float)
+
+    if not clean:
+        return []
+    lo, hi = min(clean), max(clean)
+    if hi <= lo:
+        return [(f"{lo:.3g}", len(clean))]
+
+    width = (hi - lo) / bins
+    counts = [0] * bins
+    for value in clean:
+        idx = int((value - lo) / width)
+        if idx >= bins:  # the maximum value lands exactly on the top edge.
+            idx = bins - 1
+        counts[idx] += 1
+    return [(f"{lo + i * width:.3g}", counts[i]) for i in range(bins)]
+
+
+@dataclass(frozen=True, slots=True)
+class RetrievalOutcome:
+    """Set-based classification of one query's retrieved chunks against its relevant chunks."""
+
+    hits: list[str]  # retrieved AND relevant (kept in retrieved/rank order).
+    misses: list[str]  # relevant but NOT retrieved (sorted for determinism).
+    false_hits: list[str]  # retrieved but NOT relevant (kept in retrieved/rank order).
+
+
+def classify_query_retrieval(
+    retrieved_chunk_ids: Sequence[Any], relevant_chunk_ids: Sequence[Any]
+) -> RetrievalOutcome:
+    """Split retrieved vs. relevant chunk ids into hits / misses / false hits.
+
+    ``hits`` = retrieved ∩ relevant, ``misses`` = relevant − retrieved (should-have-retrieved),
+    ``false_hits`` = retrieved − relevant. Ids are string-cast (UUIDs) for stable comparison.
+    Retrieved-order is preserved for hits/false_hits (they carry rank meaning); misses are sorted.
+    Pure/DB-free — the failure-drill-down flagging logic is unit-testable without a database.
+    """
+    retrieved = [str(cid) for cid in retrieved_chunk_ids]
+    relevant_set = {str(cid) for cid in relevant_chunk_ids}
+    retrieved_set = set(retrieved)
+    hits = [cid for cid in retrieved if cid in relevant_set]
+    false_hits = [cid for cid in retrieved if cid not in relevant_set]
+    misses = sorted(relevant_set - retrieved_set)
+    return RetrievalOutcome(hits=hits, misses=misses, false_hits=false_hits)
 
 
 # --------------------------------------------------------------------------------------------
@@ -164,6 +269,65 @@ def _load_candidate_qrels(engine: Engine, query_id: Any) -> pd.DataFrame:
         "ORDER BY ql.relevance DESC, ql.created_at"
     )
     return pd.read_sql(sql, engine, params={"query_id": str(query_id)})
+
+
+def _load_snapshots(engine: Engine) -> pd.DataFrame:
+    """Embedding-analysis snapshots: label, chunk count, cluster count, and recency."""
+    sql = text(
+        "SELECT snapshot_label, "
+        "COUNT(*) AS chunk_count, "
+        "COUNT(DISTINCT cluster_id) AS cluster_count, "
+        "MAX(created_at) AS created_at "
+        "FROM rag_eval.rag_embedding_stat "
+        "GROUP BY snapshot_label "
+        "ORDER BY MAX(created_at) DESC"
+    )
+    return pd.read_sql(sql, engine)
+
+
+def _load_embedding_stats(engine: Engine, snapshot_label: Any) -> pd.DataFrame:
+    """Per-chunk stats for one snapshot (read-only; ``rag_embedding_stat`` only)."""
+    sql = text(
+        "SELECT corpus_chunk_id, corpus_document_id, doc_type, dim, l2_norm, nn1_distance, "
+        "cluster_id, pca_x, pca_y, umap_x, umap_y "
+        "FROM rag_eval.rag_embedding_stat "
+        "WHERE snapshot_label = :snapshot_label"
+    )
+    return pd.read_sql(sql, engine, params={"snapshot_label": str(snapshot_label)})
+
+
+def _load_run_retrieved(engine: Engine, run_id: Any) -> pd.DataFrame:
+    """Retrieved chunks for a run, joined READ-ONLY to public.corpus_chunks for text."""
+    sql = text(
+        "SELECT res.query_id, q.query_text, res.rank, res.corpus_chunk_id, "
+        "res.corpus_document_id, res.score, res.is_relevant, "
+        "c.text AS chunk_text, c.doc_type, c.locator "
+        "FROM rag_eval.rag_eval_result AS res "
+        "JOIN rag_eval.rag_eval_query AS q ON q.id = res.query_id "
+        "LEFT JOIN public.corpus_chunks AS c ON c.id = res.corpus_chunk_id "
+        "WHERE res.run_id = :run_id "
+        "ORDER BY q.query_text, res.rank"
+    )
+    return pd.read_sql(sql, engine, params={"run_id": str(run_id)})
+
+
+def _load_run_relevant(engine: Engine, run_id: Any) -> pd.DataFrame:
+    """Relevant (relevance>=1) qrels for a run's dataset, joined READ-ONLY to corpus_chunks.
+
+    Qrels attach to queries; a run attaches to a dataset; a query belongs to a dataset. Scoping by
+    the run's dataset (via the run row) yields the golden labels the run should have retrieved.
+    """
+    sql = text(
+        "SELECT ql.query_id, q.query_text, ql.corpus_chunk_id, ql.corpus_document_id, "
+        "ql.relevance, c.text AS chunk_text, c.doc_type, c.locator "
+        "FROM rag_eval.rag_eval_qrel AS ql "
+        "JOIN rag_eval.rag_eval_query AS q ON q.id = ql.query_id "
+        "JOIN rag_eval.rag_eval_run AS r ON r.dataset_id = q.dataset_id "
+        "LEFT JOIN public.corpus_chunks AS c ON c.id = ql.corpus_chunk_id "
+        "WHERE r.id = :run_id AND ql.relevance >= 1 "
+        "ORDER BY q.query_text, ql.relevance DESC"
+    )
+    return pd.read_sql(sql, engine, params={"run_id": str(run_id)})
 
 
 # --------------------------------------------------------------------------------------------
@@ -377,6 +541,181 @@ def _page_label_review(engine: Engine) -> None:
     st.rerun()
 
 
+def _page_embedding_analysis(engine: Engine) -> None:
+    st.title("RAG Evaluation — embedding analysis")
+    st.caption(
+        "Read-only view over a `rag_embedding_stat` snapshot: 2-D projection, norm & "
+        "nearest-neighbor histograms, and a cluster summary. Reads existing corpus vectors only."
+    )
+
+    try:
+        snapshots = _load_snapshots(engine)
+    except Exception as exc:  # noqa: BLE001 — dev tool: surface any read failure plainly.
+        st.error(f"Could not read the rag_eval store: {exc}")
+        st.info("Run `make rag-eval-init` then the analysis snapshot (`analyze`) first.")
+        return
+
+    if snapshots.empty:
+        st.info(
+            "No embedding-analysis snapshots yet. Populate `rag_embedding_stat` with the "
+            "analysis step (reads existing corpus vectors — spends no embed quota)."
+        )
+        return
+
+    snap_labels = {
+        f"{row.snapshot_label}  ·  {int(row.chunk_count)} chunks  ·  "
+        f"{int(row.cluster_count)} clusters": row.snapshot_label
+        for row in snapshots.itertuples()
+    }
+    snap_choice = st.selectbox("Snapshot", list(snap_labels))
+    snapshot_label = snap_labels[snap_choice]
+
+    stats = _load_embedding_stats(engine, snapshot_label)
+    if stats.empty:
+        st.info("This snapshot has no rows.")
+        return
+
+    dims = sorted({int(d) for d in stats["dim"].dropna().unique()})
+    st.caption(
+        f"{len(stats)} chunks · dim(s) {', '.join(str(d) for d in dims) or '—'} · snapshot "
+        f"`{snapshot_label}`"
+    )
+
+    # --- 2-D projection scatter (PCA default; toggle to t-SNE, stored in umap_x/umap_y) ---
+    st.subheader("2-D projection")
+    col_proj, col_color = st.columns(2)
+    projection = col_proj.radio("Projection", ["PCA", "t-SNE"], horizontal=True)
+    color_by = col_color.radio("Color by", ["cluster_id", "doc_type"], horizontal=True)
+
+    x_col, y_col = ("pca_x", "pca_y") if projection == "PCA" else ("umap_x", "umap_y")
+    plot_df = stats.dropna(subset=[x_col, y_col]).copy()
+    if plot_df.empty:
+        st.info(f"No {projection} coordinates stored in this snapshot.")
+    else:
+        if color_by == "cluster_id":
+            plot_df["color"] = [cluster_label(v) for v in plot_df["cluster_id"]]
+        else:
+            plot_df["color"] = plot_df["doc_type"].fillna("unknown").astype(str)
+        st.scatter_chart(plot_df, x=x_col, y=y_col, color="color", height=440)
+
+    # --- Histograms (L2 norm + nearest-neighbor cosine distance) ---
+    st.subheader("Distributions")
+    col_norm, col_nn = st.columns(2)
+    with col_norm:
+        st.caption("L2 norm")
+        norm_hist = histogram_buckets(list(stats["l2_norm"]))
+        if norm_hist:
+            st.bar_chart(pd.DataFrame(norm_hist, columns=["bucket", "count"]).set_index("bucket"))
+        else:
+            st.info("No L2-norm values.")
+    with col_nn:
+        st.caption("Nearest-neighbor cosine distance")
+        nn_hist = histogram_buckets(list(stats["nn1_distance"]))
+        if nn_hist:
+            st.bar_chart(pd.DataFrame(nn_hist, columns=["bucket", "count"]).set_index("bucket"))
+        else:
+            st.info("No nearest-neighbor distances stored.")
+
+    # --- Cluster-size summary ---
+    st.subheader("Cluster sizes")
+    summary = cluster_size_summary(list(stats["cluster_id"]))
+    st.dataframe(
+        pd.DataFrame(summary, columns=["cluster", "size"]),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+
+def _page_failures(engine: Engine) -> None:
+    st.title("RAG Evaluation — failure drill-down")
+    st.caption(
+        "Per query: the chunks a run RETRIEVED vs. the RELEVANT chunks it should have. "
+        "Misses = relevant-but-not-retrieved; false hits = retrieved-but-not-relevant. Read-only."
+    )
+
+    try:
+        runs = _load_runs(engine)
+    except Exception as exc:  # noqa: BLE001 — dev tool: surface any read failure plainly.
+        st.error(f"Could not read the rag_eval store: {exc}")
+        st.info("Run `make rag-eval-init` then `make rag-eval` first.")
+        return
+
+    if runs.empty:
+        st.info("No eval runs yet. Run `make rag-eval` to create one.")
+        return
+
+    labels = {
+        f"{row.created_at:%Y-%m-%d %H:%M} · {row.dataset} · {row.retriever_name} "
+        f"({str(row.id)[:8]})": row.id
+        for row in runs.itertuples()
+    }
+    choice = st.selectbox("Select a run", list(labels))
+    run_id = labels[choice]
+
+    retrieved = _load_run_retrieved(engine, run_id)
+    relevant = _load_run_relevant(engine, run_id)
+
+    if retrieved.empty and relevant.empty:
+        st.info(
+            "This run has no retrieved results and its dataset has no relevance labels yet. "
+            "The failure drill-down populates once the golden set (qrels) and a run both exist."
+        )
+        return
+    if relevant.empty:
+        st.warning(
+            "No relevance labels (qrels) for this run's dataset — cannot flag misses/false hits. "
+            "Review labels on the Label Review page first."
+        )
+
+    # Union of queries seen in either frame, keyed to a display query_text.
+    query_text: dict[str, str] = {}
+    for frame in (retrieved, relevant):
+        for row in frame.itertuples():
+            query_text.setdefault(str(row.query_id), row.query_text)
+
+    for qid, qtext in sorted(query_text.items(), key=lambda kv: kv[1]):
+        retrieved_q = retrieved[retrieved["query_id"].astype(str) == qid]
+        relevant_q = relevant[relevant["query_id"].astype(str) == qid]
+        outcome = classify_query_retrieval(
+            list(retrieved_q["corpus_chunk_id"]), list(relevant_q["corpus_chunk_id"])
+        )
+        n_relevant = len(relevant_q)
+        header = (
+            f"{qtext}  —  {len(outcome.hits)}/{n_relevant} relevant retrieved · "
+            f"{len(outcome.false_hits)} false hits · {len(outcome.misses)} missed"
+        )
+        with st.expander(header):
+            st.markdown("**Retrieved** (in rank order)")
+            if retrieved_q.empty:
+                st.caption("Nothing retrieved for this query.")
+            else:
+                hit_set = set(outcome.hits)
+                view = retrieved_q[
+                    ["rank", "score", "corpus_chunk_id", "doc_type", "locator", "chunk_text"]
+                ].copy()
+                view.insert(
+                    0,
+                    "status",
+                    [
+                        "hit" if str(cid) in hit_set else "false hit"
+                        for cid in retrieved_q["corpus_chunk_id"]
+                    ],
+                )
+                st.dataframe(view, use_container_width=True, hide_index=True)
+
+            st.markdown("**Missed** (relevant but not retrieved)")
+            miss_set = set(outcome.misses)
+            missed_q = relevant_q[relevant_q["corpus_chunk_id"].astype(str).isin(miss_set)]
+            if missed_q.empty:
+                st.caption("No misses — every relevant chunk was retrieved.")
+            else:
+                st.dataframe(
+                    missed_q[["relevance", "corpus_chunk_id", "doc_type", "locator", "chunk_text"]],
+                    use_container_width=True,
+                    hide_index=True,
+                )
+
+
 def main() -> None:
     st.set_page_config(page_title="RAG Eval", layout="wide")
     engine = _get_engine()
@@ -385,6 +724,8 @@ def main() -> None:
         "Runs & Metrics": _page_runs,
         "Datasets": _page_datasets,
         "Label Review": _page_label_review,
+        "Embedding Analysis": _page_embedding_analysis,
+        "Failure Drill-down": _page_failures,
     }
     st.sidebar.header("RAG Eval")
     choice = st.sidebar.radio("Page", list(pages))

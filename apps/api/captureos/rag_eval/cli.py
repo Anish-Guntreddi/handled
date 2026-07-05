@@ -9,6 +9,7 @@ Usage::
     ... run --dataset synthetic-smoke --config '{"type":"dense","current_only":true}' --k 10
     uv run --group rag-eval python -m captureos.rag_eval.cli golden-build --name gov-smb-golden
     ... golden-bootstrap --dataset gov-smb-golden --candidate-k 30
+    ... analyze --snapshot corpus-v1 [--kmeans-k 8] [--sample 500]
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ import uuid
 from sqlalchemy import select
 
 from captureos.db.session import session_scope
+from captureos.rag_eval.analysis import compute_embedding_stats
 from captureos.rag_eval.db import init_rag_eval_schema, reset_rag_eval_schema
 from captureos.rag_eval.goldenset import (
     SEED_QUERIES,
@@ -81,6 +83,18 @@ async def _golden_bootstrap(dataset_name: str, candidate_k: int) -> tuple[uuid.U
         return dataset.id, written
 
 
+async def _analyze(snapshot_label: str, kmeans_k: int, sample: int | None) -> int:
+    """Compute a ``rag_embedding_stat`` snapshot over the embedded corpus; return rows written.
+
+    Quota-FREE: reads existing ``corpus_chunks.embedding`` vectors read-only (no Gemini calls) and
+    writes only the isolated ``rag_eval.rag_embedding_stat`` table.
+    """
+    async with session_scope() as session:
+        return await compute_embedding_stats(
+            session, snapshot_label, sample=sample, kmeans_k=kmeans_k
+        )
+
+
 async def _run(dataset_name: str, config: dict, k: int) -> tuple[uuid.UUID, dict[str, float]]:
     async with session_scope() as session:
         dataset = (
@@ -135,6 +149,18 @@ def main(argv: list[str] | None = None) -> None:
         "--candidate-k", type=int, default=30, help="candidates to over-retrieve per query"
     )
 
+    an_p = sub.add_parser(
+        "analyze",
+        help="compute a rag_embedding_stat snapshot over the embedded corpus (quota-free)",
+    )
+    an_p.add_argument("--snapshot", required=True, help="snapshot label to write under")
+    an_p.add_argument(
+        "--kmeans-k", type=int, default=8, help="KMeans cluster count (HDBSCAN-preferred fallback)"
+    )
+    an_p.add_argument(
+        "--sample", type=int, default=None, help="cap analysis to the first N embedded chunks"
+    )
+
     args = parser.parse_args(argv)
 
     if args.command == "init":
@@ -154,6 +180,9 @@ def main(argv: list[str] | None = None) -> None:
     elif args.command == "golden-bootstrap":
         dataset_id, written = asyncio.run(_golden_bootstrap(args.dataset, args.candidate_k))
         print(f"bootstrapped {written} qrel(s) for dataset {args.dataset!r} ({dataset_id})")
+    elif args.command == "analyze":
+        rows = asyncio.run(_analyze(args.snapshot, args.kmeans_k, args.sample))
+        print(f"analyzed {rows} chunk(s) -> rag_embedding_stat snapshot {args.snapshot!r}")
 
 
 if __name__ == "__main__":

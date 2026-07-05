@@ -89,8 +89,12 @@ Build: `db.py` (RagEvalBase + schema init) · `models.py` (6 tables) · `retriev
 **Acceptance:** a real named dataset exists with human-reviewed qrels; the harness runs the dense baseline on it and reports real recall@k/MRR/nDCG (using cached query vectors — a re-run embeds zero queries); label review round-trips through the dashboard; `make check` green. *(Populating the REAL data needs embed quota; if today's is exhausted the code + hermetic tests land now and the real bootstrap runs on quota reset.)*
 
 ### Phase 3 — Embedding-Analysis Spike
-`analysis.py`: populate `rag_embedding_stat` (L2 norms, nearest-neighbor cosine distance, clustering [k-means/HDBSCAN], PCA + UMAP 2-D coords) over `corpus_chunks`; **Matryoshka dim sweep** (recall@k vs. 256/512/768) · Streamlit views: embedding scatter (color by cluster/doc_type), distance histograms, **per-query failure drill-down** (query → retrieved vs. should-have-retrieved).
-**Acceptance:** a snapshot of embedding stats exists; dashboard renders scatter + histograms + failure drill-down; the dim sweep quantifies the quality/cost tradeoff; `make check` green.
+`analysis.py`:
+- **Corpus structure analysis (quota-FREE — reads existing vectors, runs REAL on the 900 embedded chunks today):** populate `rag_embedding_stat` with per-chunk L2 norm, nearest-neighbor cosine distance, clustering (scikit-learn **KMeans + HDBSCAN**), and 2-D projection coords (**PCA + t-SNE** — *not* UMAP, whose numba dep is Python-3.13-hostile, same trap as ranx). Store under a `snapshot_label`.
+- **Matryoshka dim sweep (golden-set-dependent → code now, populate on quota reset):** truncate query+corpus vectors to 256/512/768 and measure recall@k at each (quality-vs-index-cost tradeoff). Needs the golden set's query embeddings, so it lands as tested code + runs when the golden data exists.
+- Streamlit views: embedding **scatter** (PCA/t-SNE, color by cluster / doc_type), **norm + NN-distance histograms**, cluster summary, and a **per-query failure drill-down** (query → retrieved vs. should-have-retrieved, from a run's results + qrels — populates with the golden set).
+
+**Acceptance:** a REAL `rag_embedding_stat` snapshot over the 900 embedded chunks exists (no embeds spent); the dashboard renders scatter + histograms + cluster summary on it; the dim-sweep + failure-drilldown code is built + hermetically tested (populates when golden data lands); `make check` green.
 
 ### Phase 4 — Experiment Platform
 `experiments.py`: config-driven A/B runner (run N `RetrieverConfig`s over a dataset → **ranked leaderboard** with metric deltas + significance note) · Streamlit leaderboard + run-comparison + ablation views · a **baseline-characterization report** (generated from the data: where dense retrieval wins/loses by doc_type/query-type).

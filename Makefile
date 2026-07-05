@@ -108,6 +108,10 @@ rag-golden-bootstrap: ## Gemini-bootstrap candidate qrels for the golden set (th
 rag-eval: ## Run the dense baseline over the synthetic-smoke dataset and persist a scored run
 	cd $(API_DIR) && uv run --group rag-eval python -m captureos.rag_eval.cli run --dataset synthetic-smoke
 
+.PHONY: rag-analyze
+rag-analyze: ## Compute a rag_embedding_stat snapshot over the embedded corpus (quota-free; SNAPSHOT?=corpus-v1)
+	cd $(API_DIR) && uv run --group rag-eval python -m captureos.rag_eval.cli analyze --snapshot $${SNAPSHOT:-corpus-v1}
+
 .PHONY: rag-dashboard
 rag-dashboard: ## Launch the Streamlit eval dashboard (runs + metric tiles)
 	cd $(API_DIR) && uv run --group rag-eval streamlit run captureos/rag_eval/dashboard/app.py
