@@ -59,16 +59,33 @@ class GeminiEmbeddings(EmbeddingsProvider):
 
     async def embed(self, texts: list[str]) -> EmbeddingResult:  # pragma: no cover - live creds
         import anyio
+        from google.genai import errors as genai_errors  # type: ignore
         from google.genai import types  # type: ignore
 
-        resp = await anyio.to_thread.run_sync(
-            lambda: self._client.models.embed_content(
+        def _call() -> object:
+            return self._client.models.embed_content(
                 model=self._model,
                 # list[str] is valid at runtime; the SDK's union is invariant so mypy rejects it.
                 contents=texts,  # type: ignore[arg-type]
                 config=types.EmbedContentConfig(output_dimensionality=self.dim),
             )
-        )
-        # Defensive None-handling: the SDK types embeddings/values as optional.
-        vectors = [list(e.values or []) for e in (resp.embeddings or [])]
-        return EmbeddingResult(vectors=vectors, model=self._model, dim=self.dim)
+
+        # Free-tier embedding quotas (RPM/TPM) return 429 RESOURCE_EXHAUSTED. Back off and retry
+        # rather than crash a bulk embed pass; bounded so a genuine outage still surfaces.
+        delay = 20.0
+        last_exc: Exception | None = None
+        for _ in range(6):
+            try:
+                resp = await anyio.to_thread.run_sync(_call)
+            except genai_errors.ClientError as exc:
+                code = getattr(exc, "code", None) or getattr(exc, "status_code", None)
+                if code != 429:
+                    raise
+                last_exc = exc
+                await anyio.sleep(min(delay, 60.0))
+                delay *= 1.5
+                continue
+            # Defensive None-handling: the SDK types embeddings/values as optional.
+            vectors = [list(e.values or []) for e in (resp.embeddings or [])]  # type: ignore[attr-defined]
+            return EmbeddingResult(vectors=vectors, model=self._model, dim=self.dim)
+        raise last_exc if last_exc is not None else RuntimeError("embed failed")

@@ -153,6 +153,8 @@ async def embed_pending(session: AsyncSession, *, batch_size: int = 100) -> int:
         result = await get_embeddings().embed([c.text for c in chunks])
         for chunk, vector in zip(chunks, result.vectors, strict=True):
             chunk.embedding = vector
-        await session.flush()
+        # Commit per batch so a later rate-limit failure keeps the progress already made
+        # (session_scope's single end-of-scope commit would otherwise roll back the whole pass).
+        await session.commit()
         total += len(chunks)
     return total
