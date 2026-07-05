@@ -83,6 +83,23 @@ corpus-schedule: ## Run the local tiered-cadence scheduler loop (WS2; localhost 
 corpus-schedule-once: ## Run whatever corpus cadence tiers are due now, then exit (the cron unit of work)
 	cd $(API_DIR) && uv run python -m captureos.corpus.schedule --once
 
+# ---------- RAG eval (dev-only; isolated rag_eval schema, never deployed) ----------
+.PHONY: rag-eval-init
+rag-eval-init: ## Create the dev-only rag_eval schema + tables (create_all, not Alembic)
+	cd $(API_DIR) && uv run --group rag-eval python -m captureos.rag_eval.cli init
+
+.PHONY: rag-eval-seed
+rag-eval-seed: ## Seed the synthetic-smoke golden set (idempotent)
+	cd $(API_DIR) && uv run --group rag-eval python -m captureos.rag_eval.cli seed
+
+.PHONY: rag-eval
+rag-eval: ## Run the dense baseline over the synthetic-smoke dataset and persist a scored run
+	cd $(API_DIR) && uv run --group rag-eval python -m captureos.rag_eval.cli run --dataset synthetic-smoke
+
+.PHONY: rag-dashboard
+rag-dashboard: ## Launch the Streamlit eval dashboard (runs + metric tiles)
+	cd $(API_DIR) && uv run --group rag-eval streamlit run captureos/rag_eval/dashboard/app.py
+
 # ---------- Frontend (web) ----------
 .PHONY: web-install
 web-install: ## Install frontend deps
