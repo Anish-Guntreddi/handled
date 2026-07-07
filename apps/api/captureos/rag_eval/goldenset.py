@@ -7,12 +7,15 @@ Two responsibilities:
   ``rag_eval_query.embedding``. Idempotent by ``(dataset name, query_text)``: a re-run adds no
   duplicate queries and embeds nothing already present, so repeated builds never burn quota.
 
-* :func:`bootstrap_labels` — for each query, over-retrieve ``candidate_k`` candidates from the
-  dense baseline **using the cached query vector** (``corpus_retrieve(query_vector=…)`` — zero
-  re-embeds), grade each candidate 0-3 with the fenced :func:`~captureos.rag_eval.grader.
-  graded_relevance` grader, and upsert ``rag_eval_qrel`` rows (``label_source="gemini"``,
-  ``reviewed=False``) for every candidate graded ``>= 1``. Human-reviewed labels are never
-  overwritten. Returns the number of qrels written.
+* :func:`bootstrap_labels` — for each query, over-retrieve ``candidate_k`` candidates from
+  EACH retriever in a configurable pool (default: dense + lexical — **pooled judging**, so
+  lexical-unique hits get judged too and an A/B vs the dense baseline isn't structurally
+  biased), union them by ``corpus_chunk_id`` (keeping the best rank), grade each pooled
+  candidate 0-3 with the fenced :func:`~captureos.rag_eval.grader.graded_relevance` grader,
+  and upsert ``rag_eval_qrel`` rows (``label_source="gemini"``, ``reviewed=False``) for every
+  candidate graded ``>= 1``. The dense leg uses the **cached query vector** (zero re-embeds);
+  the lexical leg needs no embeddings at all. Human-reviewed labels are never overwritten.
+  Returns the number of qrels written.
 
 The grader fences UNTRUSTED corpus text; see :mod:`captureos.rag_eval.grader`.
 """
@@ -24,11 +27,11 @@ import uuid
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from captureos.ingestion.corpus_retrieval import corpus_retrieve
 from captureos.providers import get_embeddings
 from captureos.providers.base import LLMProvider
 from captureos.rag_eval.grader import graded_relevance
 from captureos.rag_eval.models import RagEvalDataset, RagEvalQrel, RagEvalQuery
+from captureos.rag_eval.retrievers import RetrievedChunk, build_retriever
 
 # Hand-written seed queries — realistic SMB federal-compliance questions matching the topics of
 # the embedded corpus (SBIR/STTR, WOSB/EDWOSB, 8(a), SAM.gov, IRC Section 41, size standards, FAR).
@@ -49,6 +52,10 @@ SEED_QUERIES: tuple[str, ...] = (
     "What are the limitations on subcontracting for a small-business set-aside award?",
     "What is the HUBZone program and how does a firm get HUBZone certified?",
 )
+
+# Default candidate pool for bootstrap_labels: judge candidates from BOTH the dense baseline and
+# the lexical control, so qrels aren't biased toward whichever retriever fetched them.
+DEFAULT_POOL_CONFIGS: tuple[dict, ...] = ({"type": "dense"}, {"type": "lexical"})
 
 _DEFAULT_DESCRIPTION = (
     "Hand-written SMB federal-compliance golden set (SBIR/STTR, WOSB/EDWOSB, 8(a), SAM.gov, "
@@ -119,16 +126,25 @@ async def bootstrap_labels(
     candidate_k: int = 30,
     batch: bool = True,
     llm: LLMProvider | None = None,
+    pool_configs: list[dict] | None = None,
 ) -> int:
     """Bootstrap Gemini candidate labels for every query in ``dataset_id``.
 
-    For each query: over-retrieve ``candidate_k`` candidates from the dense baseline USING THE
-    CACHED query vector (no re-embed), grade each 0-3 with the fenced grader, and upsert a
-    ``rag_eval_qrel`` (``label_source="gemini"``, ``reviewed=False``) for every candidate graded
-    ``>= 1``. ``batch=True`` grades all of a query's candidates in one grader call; ``batch=False``
-    grades one candidate per call. ``llm`` is forwarded to the grader as the test seam. A
-    human-reviewed qrel (``reviewed=True``) is left untouched. Returns qrels written (new +
-    updated). Does not commit.
+    POOLED JUDGING: for each query, over-retrieve ``candidate_k`` candidates from EACH retriever
+    config in ``pool_configs`` (default :data:`DEFAULT_POOL_CONFIGS` — dense + lexical), union
+    them by ``corpus_chunk_id`` (keeping the best/lowest rank for a chunk found by several legs),
+    grade each pooled candidate 0-3 with the fenced grader, and upsert a ``rag_eval_qrel``
+    (``label_source="gemini"``, ``reviewed=False``) for every candidate graded ``>= 1``. Pooling
+    keeps the qrels honest for A/Bs: a chunk only the lexical control finds still gets judged
+    instead of being scored irrelevant-by-omission. The dense leg passes the CACHED query vector
+    (zero re-embeds); the lexical leg uses no embeddings at all. A chunk found by both legs is
+    graded ONCE.
+
+    ``batch=True`` grades all of a query's pooled candidates in one grader call; ``batch=False``
+    grades one candidate per call. ``llm`` is forwarded to the grader as the test seam. Upsert
+    semantics are unchanged: a human-reviewed qrel (``reviewed=True``) is left untouched, an
+    unreviewed machine label is refreshed, and new chunk_ids are added. Returns qrels written
+    (new + updated). Does not commit.
     """
     queries = (
         (
@@ -153,17 +169,29 @@ async def bootstrap_labels(
         .all()
     }
 
+    configs = pool_configs if pool_configs is not None else list(DEFAULT_POOL_CONFIGS)
+    pool = [build_retriever(dict(config)) for config in configs]
+
     written = 0
     for query in queries:
-        rows = await corpus_retrieve(
-            session,
-            query.query_text,
-            k=candidate_k,
-            query_vector=query.embedding,  # cached vector -> zero re-embeds
-        )
-        if not rows:
+        # Pooled candidate stage: union each leg's candidates by chunk id. Insertion order is
+        # preserved (dict), and a chunk seen by several legs keeps its best (lowest) rank.
+        pooled: dict[uuid.UUID, RetrievedChunk] = {}
+        for retriever in pool:
+            leg = await retriever.retrieve(
+                session,
+                query.query_text,
+                k=candidate_k,
+                query_vector=query.embedding,  # cached vector: dense leg does zero re-embeds
+            )
+            for candidate in leg:
+                best = pooled.get(candidate.corpus_chunk_id)
+                if best is None or candidate.rank < best.rank:
+                    pooled[candidate.corpus_chunk_id] = candidate
+        if not pooled:
             continue
-        texts = [chunk.text for chunk, _distance in rows]
+        candidates = list(pooled.values())
+        texts = [candidate.text for candidate in candidates]
 
         grades: list[int]
         if batch:
@@ -173,16 +201,16 @@ async def bootstrap_labels(
             for text in texts:
                 grades.extend(await graded_relevance(query.query_text, [text], llm=llm))
 
-        for (chunk, _distance), grade in zip(rows, grades, strict=True):
+        for candidate, grade in zip(candidates, grades, strict=True):
             if grade < 1:
                 continue  # 0 = irrelevant: not a positive label
-            key = (query.id, chunk.id)
+            key = (query.id, candidate.corpus_chunk_id)
             qrel = existing.get(key)
             if qrel is None:
                 qrel = RagEvalQrel(
                     query_id=query.id,
-                    corpus_chunk_id=chunk.id,
-                    corpus_document_id=chunk.corpus_document_id,
+                    corpus_chunk_id=candidate.corpus_chunk_id,
+                    corpus_document_id=candidate.corpus_document_id,
                     relevance=grade,
                     label_source="gemini",
                     reviewed=False,

@@ -8,7 +8,8 @@ Usage::
     uv run --group rag-eval python -m captureos.rag_eval.cli run --dataset synthetic-smoke
     ... run --dataset synthetic-smoke --config '{"type":"dense","current_only":true}' --k 10
     uv run --group rag-eval python -m captureos.rag_eval.cli golden-build --name gov-smb-golden
-    ... golden-bootstrap --dataset gov-smb-golden --candidate-k 30
+    ... golden-bootstrap --dataset gov-smb-golden --candidate-k 30 \\
+        [--pool-configs '[{"type":"dense"},{"type":"lexical"}]']
     ... analyze --snapshot corpus-v1 [--kmeans-k 8] [--sample 500]
     ... experiment --dataset synthetic-smoke \\
         --configs '[{"type":"dense","label":"dense"},{"type":"lexical","label":"lexical"}]' \\
@@ -78,7 +79,9 @@ async def _golden_build(name: str) -> tuple[str, uuid.UUID, int]:
         return dataset.name, dataset.id, query_count
 
 
-async def _golden_bootstrap(dataset_name: str, candidate_k: int) -> tuple[uuid.UUID, int]:
+async def _golden_bootstrap(
+    dataset_name: str, candidate_k: int, pool_configs: list[dict] | None = None
+) -> tuple[uuid.UUID, int]:
     """Gemini-bootstrap candidate qrels for the named dataset; return (dataset_id, written)."""
     async with session_scope() as session:
         dataset = (
@@ -88,7 +91,9 @@ async def _golden_bootstrap(dataset_name: str, candidate_k: int) -> tuple[uuid.U
         ).scalar_one_or_none()
         if dataset is None:
             raise SystemExit(f"dataset {dataset_name!r} not found (build it first)")
-        written = await bootstrap_labels(session, dataset.id, candidate_k=candidate_k)
+        written = await bootstrap_labels(
+            session, dataset.id, candidate_k=candidate_k, pool_configs=pool_configs
+        )
         return dataset.id, written
 
 
@@ -200,6 +205,14 @@ def main(argv: list[str] | None = None) -> None:
     bs_p.add_argument(
         "--candidate-k", type=int, default=30, help="candidates to over-retrieve per query"
     )
+    bs_p.add_argument(
+        "--pool-configs",
+        default=None,
+        help=(
+            "JSON array of retriever configs to pool candidates from "
+            '(default: [{"type":"dense"},{"type":"lexical"}])'
+        ),
+    )
 
     an_p = sub.add_parser(
         "analyze",
@@ -247,7 +260,12 @@ def main(argv: list[str] | None = None) -> None:
         name, dataset_id, query_count = asyncio.run(_golden_build(args.name))
         print(f"golden set {name!r} ({dataset_id}) — {query_count} query(ies)")
     elif args.command == "golden-bootstrap":
-        dataset_id, written = asyncio.run(_golden_bootstrap(args.dataset, args.candidate_k))
+        pool_configs = json.loads(args.pool_configs) if args.pool_configs else None
+        if pool_configs is not None and not isinstance(pool_configs, list):
+            raise SystemExit("--pool-configs must be a JSON array of retriever config objects")
+        dataset_id, written = asyncio.run(
+            _golden_bootstrap(args.dataset, args.candidate_k, pool_configs)
+        )
         print(f"bootstrapped {written} qrel(s) for dataset {args.dataset!r} ({dataset_id})")
     elif args.command == "analyze":
         rows = asyncio.run(_analyze(args.snapshot, args.kmeans_k, args.sample))
