@@ -7,6 +7,7 @@ import uuid
 from dataclasses import dataclass
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from captureos.ingestion import corpus_retrieval
@@ -17,6 +18,7 @@ from captureos.providers import get_embeddings
 from captureos.rag_eval import retrievers
 from captureos.rag_eval.retrievers import (
     DenseRetriever,
+    LexicalRetriever,
     RetrievedChunk,
     build_retriever,
 )
@@ -219,7 +221,137 @@ def test_build_retriever_returns_dense() -> None:
     assert retriever.config == {"type": "dense", "doc_type": "form"}
 
 
+def test_build_retriever_returns_lexical() -> None:
+    retriever = build_retriever({"type": "lexical", "doc_type": "guidance"})
+    assert isinstance(retriever, LexicalRetriever)
+    assert retriever.name == "lexical"
+    assert retriever.config == {"type": "lexical", "doc_type": "guidance"}
+
+
 @pytest.mark.parametrize("bad_config", [{"type": "nope"}, {}, {"type": "hybrid"}])
 def test_build_retriever_rejects_unknown_type(bad_config: dict) -> None:
     with pytest.raises(ValueError, match="[Uu]nknown retriever type"):
         build_retriever(bad_config)
+
+
+# --- LexicalRetriever: DB-backed full-text ranking + SQL-injection safety (mock embeddings). ----
+
+
+async def _seed_lexical_chunk(
+    session: AsyncSession, text_body: str, *, external_id: str | None = None
+) -> CorpusChunk:
+    """Insert one current-law corpus chunk (embedding=None — lexical never reads it)."""
+    doc = CorpusDocument(
+        authority=CorpusAuthority.sba,
+        doc_type=CorpusDocType.guidance,
+        jurisdiction="federal",
+        title="lexical-test doc",
+        external_id=external_id or f"lexical-test-{uuid.uuid4()}",
+        citation_label="lexical-test",
+        is_current=True,
+        content_hash=str(uuid.uuid4()),
+    )
+    session.add(doc)
+    await session.flush()
+    chunk = CorpusChunk(
+        corpus_document_id=doc.id,
+        ordinal=0,
+        text=text_body,
+        locator="chunk 0",
+        content_hash=str(uuid.uuid4()),
+        doc_type=CorpusDocType.guidance,
+        jurisdiction="federal",
+        is_current=True,
+        embedding=None,
+    )
+    session.add(chunk)
+    await session.flush()
+    return chunk
+
+
+async def test_lexical_retriever_ranks_by_ts_rank(rag_eval_session: AsyncSession) -> None:
+    """The chunk with denser term overlap ranks first; scores are non-increasing and ranks
+    are a 0-based enumerate — proving ordering is driven by ts_rank, not by insertion order."""
+    strong = await _seed_lexical_chunk(
+        rag_eval_session,
+        "women owned small business set aside women owned small business federal contract",
+    )
+    weak = await _seed_lexical_chunk(rag_eval_session, "women owned business")
+    # An unrelated chunk that must NOT match the query at all.
+    await _seed_lexical_chunk(rag_eval_session, "internal revenue code section 41 research credit")
+
+    retriever = LexicalRetriever(config={})
+    results = await retriever.retrieve(
+        rag_eval_session, "women owned small business set aside", k=10
+    )
+
+    ids = [r.corpus_chunk_id for r in results]
+    assert strong.id in ids and weak.id in ids
+    # Denser overlap ranks first; the unrelated chunk is not returned.
+    assert results[0].corpus_chunk_id == strong.id
+    assert [r.rank for r in results] == list(range(len(results)))
+    assert all(
+        results[i].score >= results[i + 1].score for i in range(len(results) - 1)
+    )
+
+
+async def test_lexical_retriever_respects_doc_type_filter(rag_eval_session: AsyncSession) -> None:
+    """A ``doc_type`` config filter is applied as a bound param (excludes non-matching rows)."""
+    match = await _seed_lexical_chunk(rag_eval_session, "small business federal grant program")
+
+    # Same text under a different doc_type must be filtered out.
+    doc = CorpusDocument(
+        authority=CorpusAuthority.sba,
+        doc_type=CorpusDocType.form,
+        jurisdiction="federal",
+        title="form doc",
+        external_id=f"form-{uuid.uuid4()}",
+        citation_label="form",
+        is_current=True,
+        content_hash=str(uuid.uuid4()),
+    )
+    rag_eval_session.add(doc)
+    await rag_eval_session.flush()
+    rag_eval_session.add(
+        CorpusChunk(
+            corpus_document_id=doc.id,
+            ordinal=0,
+            text="small business federal grant program",
+            locator="chunk 0",
+            content_hash=str(uuid.uuid4()),
+            doc_type=CorpusDocType.form,
+            jurisdiction="federal",
+            is_current=True,
+            embedding=None,
+        )
+    )
+    await rag_eval_session.flush()
+
+    results = await LexicalRetriever(config={"doc_type": "guidance"}).retrieve(
+        rag_eval_session, "small business federal grant", k=10
+    )
+    assert [r.corpus_chunk_id for r in results] == [match.id]
+
+
+async def test_lexical_retriever_query_is_parametrized_against_injection(
+    rag_eval_session: AsyncSession,
+) -> None:
+    """A query full of SQL metacharacters is bound (never string-formatted): the malicious
+    statement never executes — ``corpus_chunks`` survives and the call returns safely."""
+    seeded = await _seed_lexical_chunk(rag_eval_session, "women owned small business set aside")
+
+    malicious = "'; DROP TABLE corpus_chunks; -- women owned"
+    results = await LexicalRetriever(config={}).retrieve(rag_eval_session, malicious, k=10)
+
+    # No exception, a list back, and the table is intact (the DROP was inert text to tsquery).
+    assert isinstance(results, list)
+    surviving = (
+        (await rag_eval_session.execute(select(CorpusChunk.id))).scalars().all()
+    )
+    assert seeded.id in surviving
+
+    # A second classic injection vector is likewise inert.
+    results2 = await LexicalRetriever(config={}).retrieve(
+        rag_eval_session, "' OR 1=1; --", k=10
+    )
+    assert isinstance(results2, list)

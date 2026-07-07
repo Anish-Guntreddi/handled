@@ -112,6 +112,10 @@ rag-eval: ## Run the dense baseline over the synthetic-smoke dataset and persist
 rag-analyze: ## Compute a rag_embedding_stat snapshot over the embedded corpus (quota-free; SNAPSHOT?=corpus-v1)
 	cd $(API_DIR) && uv run --group rag-eval python -m captureos.rag_eval.cli analyze --snapshot $${SNAPSHOT:-corpus-v1}
 
+.PHONY: rag-experiment
+rag-experiment: ## A/B run N retriever configs over a dataset and print a ranked leaderboard (DATASET?=synthetic-smoke, CONFIGS?=dense-vs-lexical, SORT_METRIC?=ndcg@10)
+	cd $(API_DIR) && uv run --group rag-eval python -m captureos.rag_eval.cli experiment --dataset $${DATASET:-synthetic-smoke} --configs $${CONFIGS:-'[{"type":"dense","label":"dense"},{"type":"lexical","label":"lexical"}]'} --sort-metric $${SORT_METRIC:-ndcg@10}
+
 .PHONY: rag-dashboard
 rag-dashboard: ## Launch the Streamlit eval dashboard (runs + metric tiles)
 	cd $(API_DIR) && uv run --group rag-eval streamlit run captureos/rag_eval/dashboard/app.py

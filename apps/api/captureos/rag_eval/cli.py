@@ -10,6 +10,9 @@ Usage::
     uv run --group rag-eval python -m captureos.rag_eval.cli golden-build --name gov-smb-golden
     ... golden-bootstrap --dataset gov-smb-golden --candidate-k 30
     ... analyze --snapshot corpus-v1 [--kmeans-k 8] [--sample 500]
+    ... experiment --dataset synthetic-smoke \\
+        --configs '[{"type":"dense","label":"dense"},{"type":"lexical","label":"lexical"}]' \\
+        [--k 10] [--sort-metric ndcg@10]
 """
 
 from __future__ import annotations
@@ -18,12 +21,18 @@ import argparse
 import asyncio
 import json
 import uuid
+from typing import Any
 
 from sqlalchemy import select
 
 from captureos.db.session import session_scope
 from captureos.rag_eval.analysis import compute_embedding_stats
 from captureos.rag_eval.db import init_rag_eval_schema, reset_rag_eval_schema
+from captureos.rag_eval.experiments import (
+    build_leaderboard,
+    per_query_scores,
+    run_experiment,
+)
 from captureos.rag_eval.goldenset import (
     SEED_QUERIES,
     bootstrap_labels,
@@ -109,6 +118,49 @@ async def _run(dataset_name: str, config: dict, k: int) -> tuple[uuid.UUID, dict
         return run.id, dict(run.metrics)
 
 
+async def _experiment(
+    dataset_name: str, configs: list[dict], k: int, sort_metric: str
+) -> list[dict[str, Any]]:
+    """Run every config over the named dataset and return the ranked leaderboard rows.
+
+    A sweep re-uses each query's cached embedding (via ``run_eval``), so it re-embeds zero
+    queries. Per-query ``sort_metric`` values are re-derived through the single metric-truth so the
+    leaderboard's significance note is honest. The board rows are plain dicts, so they survive the
+    session scope's commit intact.
+    """
+    async with session_scope() as session:
+        dataset = (
+            await session.execute(
+                select(RagEvalDataset).where(RagEvalDataset.name == dataset_name)
+            )
+        ).scalar_one_or_none()
+        if dataset is None:
+            raise SystemExit(f"dataset {dataset_name!r} not found (seed/build it first)")
+        runs = await run_experiment(session, dataset.id, configs, k=k)
+        per_query = {
+            str(run.id): await per_query_scores(session, run.id, metric=sort_metric)
+            for run in runs
+        }
+        return build_leaderboard(runs, sort_metric=sort_metric, per_query=per_query)
+
+
+def _print_leaderboard(
+    dataset_name: str, sort_metric: str, board: list[dict[str, Any]]
+) -> None:
+    print(f"\nleaderboard · dataset {dataset_name!r} · ranked by {sort_metric} desc")
+    if not board:
+        print("  (no runs — empty dataset or no configs)")
+        return
+    for row in board:
+        marker = "*" if row["is_baseline"] else " "
+        delta = "baseline" if row["is_baseline"] else f"{row['delta']:+.4f}"
+        print(
+            f"  {marker} #{row['rank']:<2} {row['label']:<20} "
+            f"{sort_metric}={row['sort_value']:.4f}  Δ={delta}  ({row['retriever_name']})"
+        )
+        print(f"        significance: {row['significance']['note']}")
+
+
 def _print_metrics_table(dataset_name: str, run_id: uuid.UUID, metrics: dict[str, float]) -> None:
     print(f"\nrun {run_id}  ·  dataset {dataset_name!r}")
     if not metrics:
@@ -161,6 +213,23 @@ def main(argv: list[str] | None = None) -> None:
         "--sample", type=int, default=None, help="cap analysis to the first N embedded chunks"
     )
 
+    ex_p = sub.add_parser(
+        "experiment",
+        help="run N retriever configs over a dataset (A/B) and print a ranked leaderboard",
+    )
+    ex_p.add_argument("--dataset", required=True, help="dataset name to evaluate")
+    ex_p.add_argument(
+        "--configs",
+        required=True,
+        help='JSON array of retriever configs, each {"type":"dense"|"lexical", "label"?:...}',
+    )
+    ex_p.add_argument("--k", type=int, default=10, help="top-k to retrieve per query")
+    ex_p.add_argument(
+        "--sort-metric",
+        default="ndcg@10",
+        help="public metric to rank by (recall@1|recall@5|recall@10|mrr|ndcg@10|map)",
+    )
+
     args = parser.parse_args(argv)
 
     if args.command == "init":
@@ -183,6 +252,14 @@ def main(argv: list[str] | None = None) -> None:
     elif args.command == "analyze":
         rows = asyncio.run(_analyze(args.snapshot, args.kmeans_k, args.sample))
         print(f"analyzed {rows} chunk(s) -> rag_embedding_stat snapshot {args.snapshot!r}")
+    elif args.command == "experiment":
+        configs = json.loads(args.configs)
+        if not isinstance(configs, list):
+            raise SystemExit("--configs must be a JSON array of retriever config objects")
+        board = asyncio.run(
+            _experiment(args.dataset, configs, args.k, args.sort_metric)
+        )
+        _print_leaderboard(args.dataset, args.sort_metric, board)
 
 
 if __name__ == "__main__":

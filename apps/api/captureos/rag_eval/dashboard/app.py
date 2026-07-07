@@ -19,6 +19,12 @@ Pages (sidebar selector):
   scatter (colored by cluster / doc_type), L2-norm + NN-distance histograms, cluster summary.
 * **Failure Drill-down** (P3, read-only) — pick a run → per query, the retrieved chunks vs. the
   relevant (should-have-retrieved) chunks, flagging misses and false hits.
+* **Leaderboard** (P4, read-only) — pick a dataset → all its runs ranked by a chosen metric,
+  per-metric columns + a delta-vs-top column, best row highlighted.
+* **Run Comparison** (P4, read-only) — pick two runs → side-by-side aggregate metrics + a
+  per-query metric diff (which queries a config helped/hurt), recomputed via ``metrics.py``.
+* **Baseline Report** (P4, read-only) — pick a run → per-doc_type recall, zero-recall query
+  count, and the top miss patterns (where dense retrieval wins/loses).
 
 The two P3 pages read ONLY: ``rag_eval.rag_embedding_stat`` / ``rag_eval.rag_eval_result`` /
 ``rag_eval.rag_eval_qrel`` (+ their eval joins), with a READ-ONLY join to ``public.corpus_chunks``
@@ -39,6 +45,7 @@ import streamlit as st
 from sqlalchemy import Engine, TextClause, create_engine, text
 
 from captureos.config import get_settings
+from captureos.rag_eval.metrics import compute_metrics
 
 # Metric keys as persisted by the harness in ``rag_eval_run.metrics`` (see PRD data model).
 _METRIC_TILES: tuple[tuple[str, str], ...] = (
@@ -197,6 +204,219 @@ def classify_query_retrieval(
 
 
 # --------------------------------------------------------------------------------------------
+# Experiment-platform helpers (P4): leaderboard rows, run-comparison diffs, baseline report.
+# All pure / DB-free so the ranking, delta, and characterization logic is unit-testable without
+# a database. Rendering pages below feed these already-loaded rows/metrics.
+# --------------------------------------------------------------------------------------------
+
+# Leaderboard / aggregate ranking: display label -> persisted ``rag_eval_run.metrics`` key (the
+# harness writes these public keys; see metrics.py ``_METRIC_MAP``).
+_RANK_METRICS: dict[str, str] = {
+    "recall@5": "recall@5",
+    "MRR": "mrr",
+    "nDCG@10": "ndcg@10",
+    "MAP": "map",
+}
+# Per-query diff: display label -> pytrec_eval per-query key (``compute_metrics`` returns raw
+# pytrec output keyed by these).
+_PERQUERY_METRICS: dict[str, str] = {
+    "recall@5": "recall_5",
+    "MRR": "recip_rank",
+    "nDCG@10": "ndcg_cut_10",
+    "MAP": "map",
+}
+
+
+def _as_metric_float(value: Any) -> float | None:
+    """Coerce a metric cell to a finite float, or ``None`` (missing / NaN / non-numeric)."""
+    if value is None:
+        return None
+    try:
+        as_float = float(value)
+    except (TypeError, ValueError):
+        return None
+    return None if math.isnan(as_float) else as_float
+
+
+def format_delta(delta: float | None) -> str:
+    """Format a metric delta for display: signed 3-dp, ``"—"`` for missing, ``"best"`` at 0."""
+    if delta is None:
+        return "—"
+    if delta == 0:
+        return "best"
+    return f"{delta:+.3f}"
+
+
+@dataclass(frozen=True, slots=True)
+class LeaderboardRow:
+    """One ranked run: its metrics, the ranking value, and its delta vs. the top run."""
+
+    rank: int
+    run_id: str
+    label: str
+    metrics: dict[str, float | None]  # persisted metric key -> value
+    rank_value: float | None
+    delta_vs_top: float | None
+    is_best: bool
+
+
+def build_leaderboard_rows(
+    runs: Sequence[tuple[Any, str, dict[str, Any]]], rank_metric_key: str
+) -> list[LeaderboardRow]:
+    """Rank ``runs`` by ``rank_metric_key`` desc → rows with a delta-vs-top column.
+
+    ``runs`` is ``[(run_id, label, metrics_dict)]``. Rows sort by the chosen metric (missing
+    values last, ties broken by label). Each row's ``delta_vs_top`` is its metric minus the top
+    (best) value — ``0`` on the best row, negative below it, ``None`` when its metric is missing.
+    Pure / DB-free.
+    """
+    prepared: list[tuple[str, str, dict[str, float | None]]] = [
+        (str(run_id), label, {k: _as_metric_float(v) for k, v in (metrics or {}).items()})
+        for run_id, label, metrics in runs
+    ]
+
+    def sort_key(item: tuple[str, str, dict[str, float | None]]) -> tuple[int, float, str]:
+        value = item[2].get(rank_metric_key)
+        # Present metrics first (0), ordered by value desc via negation; missing last (1).
+        return (0, -value, item[1]) if value is not None else (1, 0.0, item[1])
+
+    ordered = sorted(prepared, key=sort_key)
+    present = [
+        item[2][rank_metric_key] for item in ordered if item[2].get(rank_metric_key) is not None
+    ]
+    best = present[0] if present else None
+
+    rows: list[LeaderboardRow] = []
+    for position, (run_id, label, metrics) in enumerate(ordered, start=1):
+        value = metrics.get(rank_metric_key)
+        delta = (value - best) if (value is not None and best is not None) else None
+        rows.append(
+            LeaderboardRow(
+                rank=position,
+                run_id=run_id,
+                label=label,
+                metrics=metrics,
+                rank_value=value,
+                delta_vs_top=delta,
+                is_best=value is not None and best is not None and value == best,
+            )
+        )
+    return rows
+
+
+def build_aggregate_comparison(
+    metrics_a: dict[str, Any],
+    metrics_b: dict[str, Any],
+    metric_keys: Sequence[tuple[str, str]],
+) -> list[tuple[str, float | None, float | None, float | None]]:
+    """Side-by-side aggregate metrics for two runs → ``[(label, a, b, delta=b−a)]``.
+
+    ``metric_keys`` is ``[(display_label, persisted_key)]``. ``delta`` is ``None`` when either
+    side is missing. Pure / DB-free.
+    """
+    out: list[tuple[str, float | None, float | None, float | None]] = []
+    for label, key in metric_keys:
+        a = _as_metric_float((metrics_a or {}).get(key))
+        b = _as_metric_float((metrics_b or {}).get(key))
+        delta = (b - a) if (a is not None and b is not None) else None
+        out.append((label, a, b, delta))
+    return out
+
+
+def build_perquery_diff(
+    per_query_a: dict[str, dict[str, float]],
+    per_query_b: dict[str, dict[str, float]],
+    trec_metric_key: str,
+    query_texts: dict[str, str],
+) -> list[tuple[str, str, float, float, float]]:
+    """Per-query metric under run A vs. B → ``[(query_id, query_text, a, b, delta=b−a)]``.
+
+    Union of query ids across both runs; a query a run retrieved nothing for scores ``0`` (the
+    same convention metrics.py uses for aggregates). Sorted by ``|delta|`` desc (biggest swings
+    first), then query text. Pure / DB-free.
+    """
+    qids = set(per_query_a) | set(per_query_b)
+    rows: list[tuple[str, str, float, float, float]] = []
+    for qid in qids:
+        a = float(per_query_a.get(qid, {}).get(trec_metric_key, 0.0))
+        b = float(per_query_b.get(qid, {}).get(trec_metric_key, 0.0))
+        rows.append((qid, query_texts.get(qid, qid), a, b, b - a))
+    rows.sort(key=lambda row: (-abs(row[4]), row[1]))
+    return rows
+
+
+@dataclass(frozen=True, slots=True)
+class BaselineReport:
+    """Characterization of where dense retrieval wins/loses on one run."""
+
+    doc_type_recall: list[tuple[str, int, int, float]]  # (doc_type, retrieved, relevant, recall)
+    total_queries_with_relevant: int
+    zero_recall_query_count: int
+    zero_recall_query_ids: list[str]
+    top_miss_patterns: list[tuple[str, int]]  # (doc_type, missed_chunks) desc
+
+
+def _doc_type_label(doc_type: Any) -> str:
+    """Normalize a nullable ``doc_type`` (``None`` / NaN → ``"unknown"``)."""
+    if doc_type is None or (isinstance(doc_type, float) and math.isnan(doc_type)):
+        return "unknown"
+    return str(doc_type)
+
+
+def build_baseline_report(
+    relevant_rows: Sequence[tuple[Any, Any, Any]],
+    retrieved_rows: Sequence[tuple[Any, Any]],
+) -> BaselineReport:
+    """Characterize a run's retrieval by doc_type from its relevant vs. retrieved chunks.
+
+    ``relevant_rows`` = ``(query_id, corpus_chunk_id, doc_type)`` for relevance≥1 qrels;
+    ``retrieved_rows`` = ``(query_id, corpus_chunk_id)`` from the run's results. A relevant chunk
+    is a *hit* when it was retrieved for its own query, else a *miss*. Computes per-doc_type
+    recall (retrieved∩relevant / relevant), the count of zero-recall queries (≥1 relevant, 0
+    retrieved), and the top miss patterns (missed relevant chunks grouped by doc_type). Ids are
+    string-cast (UUIDs). Pure / DB-free.
+    """
+    retrieved_by_query: dict[str, set[str]] = {}
+    for qid, cid in retrieved_rows:
+        retrieved_by_query.setdefault(str(qid), set()).add(str(cid))
+
+    dt_total: dict[str, int] = {}
+    dt_hit: dict[str, int] = {}
+    miss_by_dt: dict[str, int] = {}
+    per_query_relevant: dict[str, int] = {}
+    per_query_hits: dict[str, int] = {}
+
+    for qid, cid, doc_type in relevant_rows:
+        query = str(qid)
+        label = _doc_type_label(doc_type)
+        hit = str(cid) in retrieved_by_query.get(query, set())
+        dt_total[label] = dt_total.get(label, 0) + 1
+        per_query_relevant[query] = per_query_relevant.get(query, 0) + 1
+        if hit:
+            dt_hit[label] = dt_hit.get(label, 0) + 1
+            per_query_hits[query] = per_query_hits.get(query, 0) + 1
+        else:
+            miss_by_dt[label] = miss_by_dt.get(label, 0) + 1
+
+    doc_type_recall = [
+        (label, dt_hit.get(label, 0), total, (dt_hit.get(label, 0) / total) if total else 0.0)
+        for label, total in dt_total.items()
+    ]
+    doc_type_recall.sort(key=lambda r: (-r[2], r[0]))
+
+    zero_recall = sorted(query for query in per_query_relevant if per_query_hits.get(query, 0) == 0)
+    top_miss = sorted(miss_by_dt.items(), key=lambda kv: (-kv[1], kv[0]))
+
+    return BaselineReport(
+        doc_type_recall=doc_type_recall,
+        total_queries_with_relevant=len(per_query_relevant),
+        zero_recall_query_count=len(zero_recall),
+        zero_recall_query_ids=zero_recall,
+        top_miss_patterns=top_miss,
+    )
+
+
+# --------------------------------------------------------------------------------------------
 # Read queries (all schema-qualified to rag_eval.*; corpus_chunks join is read-only).
 # --------------------------------------------------------------------------------------------
 def _load_runs(engine: Engine) -> pd.DataFrame:
@@ -328,6 +548,61 @@ def _load_run_relevant(engine: Engine, run_id: Any) -> pd.DataFrame:
         "ORDER BY q.query_text, ql.relevance DESC"
     )
     return pd.read_sql(sql, engine, params={"run_id": str(run_id)})
+
+
+def _load_runs_for_dataset(engine: Engine, dataset_id: Any) -> pd.DataFrame:
+    """All runs for one dataset (for the leaderboard), newest first (read-only)."""
+    sql = text(
+        "SELECT r.id, r.retriever_name, r.retriever_config, r.embedding_model, r.k, "
+        "r.metrics, r.notes, r.created_at "
+        "FROM rag_eval.rag_eval_run AS r "
+        "WHERE r.dataset_id = :dataset_id "
+        "ORDER BY r.created_at DESC"
+    )
+    return pd.read_sql(sql, engine, params={"dataset_id": str(dataset_id)})
+
+
+def _load_run_score_rows(engine: Engine, run_id: Any) -> pd.DataFrame:
+    """A run's retrieved (query_id, chunk_id, score) rows for per-query metric recompute."""
+    sql = text(
+        "SELECT res.query_id, q.query_text, res.corpus_chunk_id, res.score "
+        "FROM rag_eval.rag_eval_result AS res "
+        "JOIN rag_eval.rag_eval_query AS q ON q.id = res.query_id "
+        "WHERE res.run_id = :run_id"
+    )
+    return pd.read_sql(sql, engine, params={"run_id": str(run_id)})
+
+
+def _load_run_qrel_rows(engine: Engine, run_id: Any) -> pd.DataFrame:
+    """All qrels for a run's dataset (query_id, chunk_id, graded relevance) for metric recompute.
+
+    Scoped by the run's dataset (run → dataset → query → qrel), all grades (0-3): pytrec treats a
+    label as the graded truth and a missing chunk as 0. ``rag_eval.*`` only — no corpus join.
+    """
+    sql = text(
+        "SELECT ql.query_id, ql.corpus_chunk_id, ql.relevance "
+        "FROM rag_eval.rag_eval_qrel AS ql "
+        "JOIN rag_eval.rag_eval_query AS q ON q.id = ql.query_id "
+        "JOIN rag_eval.rag_eval_run AS r ON r.dataset_id = q.dataset_id "
+        "WHERE r.id = :run_id"
+    )
+    return pd.read_sql(sql, engine, params={"run_id": str(run_id)})
+
+
+def _qrel_dict_from_df(df: pd.DataFrame) -> dict[str, dict[str, int]]:
+    """``{query_id: {chunk_id: relevance}}`` from a qrel frame (adapter for compute_metrics)."""
+    qrel: dict[str, dict[str, int]] = {}
+    for qid, cid, rel in zip(df["query_id"], df["corpus_chunk_id"], df["relevance"], strict=True):
+        qrel.setdefault(str(qid), {})[str(cid)] = int(rel)
+    return qrel
+
+
+def _run_dict_from_df(df: pd.DataFrame) -> dict[str, dict[str, float]]:
+    """``{query_id: {chunk_id: score}}`` from a results frame (thin adapter for compute_metrics)."""
+    run: dict[str, dict[str, float]] = {}
+    for qid, cid, score in zip(df["query_id"], df["corpus_chunk_id"], df["score"], strict=True):
+        run.setdefault(str(qid), {})[str(cid)] = float(score)
+    return run
 
 
 # --------------------------------------------------------------------------------------------
@@ -716,6 +991,265 @@ def _page_failures(engine: Engine) -> None:
                 )
 
 
+def _page_leaderboard(engine: Engine) -> None:
+    st.title("RAG Evaluation — leaderboard")
+    st.caption(
+        "Rank every run over a dataset by a chosen metric, with per-metric columns and a "
+        "delta-vs-top column (best row highlighted). Read-only over the isolated `rag_eval` schema."
+    )
+
+    try:
+        datasets = _load_datasets(engine)
+    except Exception as exc:  # noqa: BLE001 — dev tool: surface any read failure plainly.
+        st.error(f"Could not read the rag_eval store: {exc}")
+        st.info("Run `make rag-eval-init` then `make rag-eval` first.")
+        return
+
+    if datasets.empty:
+        st.info("No datasets yet. Run `make rag-eval` to create one.")
+        return
+
+    ds_labels = {f"{row.name} ({str(row.id)[:8]})": row.id for row in datasets.itertuples()}
+    ds_choice = st.selectbox("Dataset", list(ds_labels))
+    dataset_id = ds_labels[ds_choice]
+
+    runs = _load_runs_for_dataset(engine, dataset_id)
+    if runs.empty:
+        st.info("No runs for this dataset yet. Run `make rag-eval` on it.")
+        return
+
+    rank_choice = st.selectbox("Rank by", list(_RANK_METRICS))
+    rank_key = _RANK_METRICS[rank_choice]
+
+    records: list[tuple[Any, str, dict[str, Any]]] = []
+    for row in runs.itertuples():
+        label = (
+            f"{row.created_at:%Y-%m-%d %H:%M} · {row.retriever_name} · k={row.k} "
+            f"({str(row.id)[:8]})"
+        )
+        records.append((row.id, label, _metrics_dict(row.metrics)))
+
+    rows = build_leaderboard_rows(records, rank_key)
+
+    display: list[dict[str, Any]] = []
+    for row in rows:
+        entry: dict[str, Any] = {
+            "rank": row.rank,
+            "best": "★" if row.is_best else "",
+            "run": row.label,
+        }
+        for label, key in _METRIC_TILES:
+            entry[label] = _fmt_metric(row.metrics.get(key))
+        entry[f"Δ vs top ({rank_choice})"] = format_delta(row.delta_vs_top)
+        display.append(entry)
+    frame = pd.DataFrame(display)
+
+    def _highlight_best(row: pd.Series) -> list[str]:
+        style = "background-color: rgba(45, 106, 79, 0.35)" if row["best"] == "★" else ""
+        return [style] * len(row)
+
+    st.dataframe(
+        frame.style.apply(_highlight_best, axis=1),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+
+def _page_run_comparison(engine: Engine) -> None:
+    st.title("RAG Evaluation — run comparison")
+    st.caption(
+        "Pick two runs → side-by-side aggregate metrics and a per-query metric diff (which "
+        "queries a config helped or hurt). Read-only; per-query metrics recomputed via metrics.py."
+    )
+
+    try:
+        runs = _load_runs(engine)
+    except Exception as exc:  # noqa: BLE001 — dev tool: surface any read failure plainly.
+        st.error(f"Could not read the rag_eval store: {exc}")
+        st.info("Run `make rag-eval-init` then `make rag-eval` first.")
+        return
+
+    if len(runs) < 2:
+        st.info("Need at least two runs to compare. Run `make rag-eval` again with a new config.")
+        return
+
+    labels = {
+        f"{row.created_at:%Y-%m-%d %H:%M} · {row.dataset} · {row.retriever_name} "
+        f"({str(row.id)[:8]})": row.id
+        for row in runs.itertuples()
+    }
+    label_list = list(labels)
+    col_a, col_b = st.columns(2)
+    a_choice = col_a.selectbox("Run A", label_list, index=0)
+    b_choice = col_b.selectbox("Run B", label_list, index=min(1, len(label_list) - 1))
+    run_a, run_b = labels[a_choice], labels[b_choice]
+    if run_a == run_b:
+        st.warning("Pick two different runs to compare.")
+        return
+
+    row_a = runs.loc[runs["id"] == run_a].iloc[0]
+    row_b = runs.loc[runs["id"] == run_b].iloc[0]
+    if row_a["dataset"] != row_b["dataset"]:
+        st.warning(
+            f"Runs are over different datasets ({row_a['dataset']} vs {row_b['dataset']}); "
+            "the per-query diff only covers queries they share."
+        )
+
+    st.subheader("Aggregate metrics")
+    agg = build_aggregate_comparison(
+        _metrics_dict(row_a["metrics"]), _metrics_dict(row_b["metrics"]), _METRIC_TILES
+    )
+    st.dataframe(
+        pd.DataFrame(
+            [
+                {
+                    "metric": label,
+                    "A": _fmt_metric(a),
+                    "B": _fmt_metric(b),
+                    "Δ (B−A)": format_delta(delta),
+                }
+                for label, a, b, delta in agg
+            ]
+        ),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    st.subheader("Per-query diff")
+    metric_choice = st.selectbox("Per-query metric", list(_PERQUERY_METRICS))
+    trec_key = _PERQUERY_METRICS[metric_choice]
+
+    scores_a = _load_run_score_rows(engine, run_a)
+    scores_b = _load_run_score_rows(engine, run_b)
+    qrels_a = _load_run_qrel_rows(engine, run_a)
+    qrels_b = _load_run_qrel_rows(engine, run_b)
+    _, pq_a = compute_metrics(_qrel_dict_from_df(qrels_a), _run_dict_from_df(scores_a))
+    _, pq_b = compute_metrics(_qrel_dict_from_df(qrels_b), _run_dict_from_df(scores_b))
+
+    if not pq_a and not pq_b:
+        st.info(
+            "No per-query metrics — both runs' datasets need relevance labels (qrels). "
+            "Review labels on the Label Review page first."
+        )
+        return
+
+    query_texts: dict[str, str] = {}
+    for frame in (scores_a, scores_b):
+        for row in frame.itertuples():
+            query_texts.setdefault(str(row.query_id), row.query_text)
+
+    diff = build_perquery_diff(pq_a, pq_b, trec_key, query_texts)
+    if not diff:
+        st.info("No queries with per-query metrics to diff.")
+        return
+
+    st.dataframe(
+        pd.DataFrame(
+            [
+                {
+                    "query": qtext,
+                    f"A · {metric_choice}": round(a, 3),
+                    f"B · {metric_choice}": round(b, 3),
+                    "Δ (B−A)": round(delta, 3),
+                }
+                for _qid, qtext, a, b, delta in diff
+            ]
+        ),
+        use_container_width=True,
+        hide_index=True,
+    )
+    st.caption("Sorted by |Δ| — the queries this config change moved the most appear first.")
+
+
+def _page_baseline_report(engine: Engine) -> None:
+    st.title("RAG Evaluation — baseline report")
+    st.caption(
+        "Characterize where dense retrieval wins/loses on a run: per-doc_type recall, "
+        "zero-recall queries, and the top miss patterns. Read-only."
+    )
+
+    try:
+        runs = _load_runs(engine)
+    except Exception as exc:  # noqa: BLE001 — dev tool: surface any read failure plainly.
+        st.error(f"Could not read the rag_eval store: {exc}")
+        st.info("Run `make rag-eval-init` then `make rag-eval` first.")
+        return
+
+    if runs.empty:
+        st.info("No eval runs yet. Run `make rag-eval` to create one.")
+        return
+
+    labels = {
+        f"{row.created_at:%Y-%m-%d %H:%M} · {row.dataset} · {row.retriever_name} "
+        f"({str(row.id)[:8]})": row.id
+        for row in runs.itertuples()
+    }
+    choice = st.selectbox("Select a run", list(labels))
+    run_id = labels[choice]
+
+    retrieved = _load_run_retrieved(engine, run_id)
+    relevant = _load_run_relevant(engine, run_id)
+    if relevant.empty:
+        st.warning(
+            "This run's dataset has no relevance labels (qrels) yet — the baseline report needs "
+            "the golden set. Review labels on the Label Review page first."
+        )
+        return
+
+    report = build_baseline_report(
+        list(
+            zip(
+                relevant["query_id"],
+                relevant["corpus_chunk_id"],
+                relevant["doc_type"],
+                strict=True,
+            )
+        ),
+        list(zip(retrieved["query_id"], retrieved["corpus_chunk_id"], strict=True)),
+    )
+
+    overall_relevant = sum(total for _dt, _hit, total, _r in report.doc_type_recall)
+    overall_hits = sum(hit for _dt, hit, _total, _r in report.doc_type_recall)
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Queries with relevant labels", report.total_queries_with_relevant)
+    col2.metric("Zero-recall queries", report.zero_recall_query_count)
+    col3.metric(
+        "Overall chunk recall",
+        _fmt_metric(overall_hits / overall_relevant) if overall_relevant else "—",
+    )
+
+    st.subheader("Recall by doc_type")
+    st.dataframe(
+        pd.DataFrame(
+            [
+                {"doc_type": dt, "retrieved": hit, "relevant": total, "recall": _fmt_metric(rec)}
+                for dt, hit, total, rec in report.doc_type_recall
+            ]
+        ),
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    st.subheader("Top miss patterns")
+    if report.top_miss_patterns:
+        st.dataframe(
+            pd.DataFrame(report.top_miss_patterns, columns=["doc_type", "missed_chunks"]),
+            use_container_width=True,
+            hide_index=True,
+        )
+    else:
+        st.caption("No misses — every relevant chunk was retrieved.")
+
+    if report.zero_recall_query_ids:
+        st.subheader("Zero-recall queries (nothing relevant retrieved)")
+        qtext = {str(row.query_id): row.query_text for row in relevant.itertuples()}
+        st.dataframe(
+            pd.DataFrame({"query": [qtext.get(qid, qid) for qid in report.zero_recall_query_ids]}),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+
 def main() -> None:
     st.set_page_config(page_title="RAG Eval", layout="wide")
     engine = _get_engine()
@@ -726,6 +1260,9 @@ def main() -> None:
         "Label Review": _page_label_review,
         "Embedding Analysis": _page_embedding_analysis,
         "Failure Drill-down": _page_failures,
+        "Leaderboard": _page_leaderboard,
+        "Run Comparison": _page_run_comparison,
+        "Baseline Report": _page_baseline_report,
     }
     st.sidebar.header("RAG Eval")
     choice = st.sidebar.radio("Page", list(pages))
