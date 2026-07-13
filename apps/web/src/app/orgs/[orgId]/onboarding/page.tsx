@@ -13,6 +13,7 @@ import { Button, Card, Eyebrow, CaptureOSLogo, Input, Textarea } from "@/compone
 import { ApiError, apiDownload, apiFetch, errorMessage, pollWorkflowRun } from "@/lib/api";
 import { captureosFontVars } from "@/lib/captureos-fonts";
 import { useAuth } from "@/lib/auth";
+import { INDUSTRY_OPTIONS, isKnownIndustry } from "@/lib/industries";
 import type { CompanyProfile, WorkflowRunCreated } from "@/lib/types";
 
 // Onboarding wizard — the profile capture that seeds the Company Brain before the
@@ -438,6 +439,11 @@ function StepBusiness({
   data: WizardState;
   set: <K extends keyof WizardState>(key: K, value: WizardState[K]) => void;
 }) {
+  // "Other" is active whenever the current value doesn't match one of the
+  // known categories — including a blank value the user hasn't touched yet,
+  // once they've explicitly opened the custom field via the Other chip.
+  const [otherOpen, setOtherOpen] = useState(data.industry !== "" && !isKnownIndustry(data.industry));
+
   return (
     <div className="gr-animate-rise">
       <StepHeading>Tell us about your business</StepHeading>
@@ -463,26 +469,47 @@ function StepBusiness({
         style={{ marginBottom: 20 }}
       />
 
-      <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
-        <div style={{ flex: 1, minWidth: 200 }}>
-          <label style={FIELD_LABEL}>Industry</label>
-          <Input
-            value={data.industry}
-            onChange={(e) => set("industry", e.target.value)}
-            placeholder="e.g. Health tech"
+      <label style={{ ...FIELD_LABEL, marginBottom: 11 }}>Industry</label>
+      <div style={{ display: "flex", gap: 9, flexWrap: "wrap", marginBottom: otherOpen ? 11 : 20 }}>
+        {INDUSTRY_OPTIONS.map((opt) => (
+          <OptionChip
+            key={opt}
+            label={opt}
+            selected={!otherOpen && data.industry === opt}
+            onClick={() => {
+              setOtherOpen(false);
+              set("industry", data.industry === opt ? "" : opt);
+            }}
           />
-        </div>
-        <div style={{ flex: 1, minWidth: 160 }}>
-          <label style={FIELD_LABEL}>Location · optional</label>
-          <Input
-            value={data.location}
-            onChange={(e) => set("location", e.target.value)}
-            placeholder="City, State"
-          />
-        </div>
+        ))}
+        <OptionChip
+          label="Other"
+          selected={otherOpen}
+          onClick={() => {
+            const opening = !otherOpen;
+            setOtherOpen(opening);
+            if (opening && isKnownIndustry(data.industry)) set("industry", "");
+          }}
+        />
       </div>
+      {otherOpen && (
+        <Input
+          value={data.industry}
+          onChange={(e) => set("industry", e.target.value)}
+          placeholder="Describe your industry"
+          style={{ marginBottom: 20 }}
+        />
+      )}
 
-      <label style={{ ...FIELD_LABEL, marginTop: 20 }}>Website · optional</label>
+      <label style={FIELD_LABEL}>Location · optional</label>
+      <Input
+        value={data.location}
+        onChange={(e) => set("location", e.target.value)}
+        placeholder="City, State"
+        style={{ marginBottom: 20 }}
+      />
+
+      <label style={FIELD_LABEL}>Website · optional</label>
       <Input
         type="url"
         inputMode="url"
@@ -827,6 +854,9 @@ function BrainReview({
   onDone: () => void;
 }) {
   const [industry, setIndustry] = useState(profile.industry ?? "");
+  const [industryOtherOpen, setIndustryOtherOpen] = useState(
+    industry !== "" && !isKnownIndustry(industry),
+  );
   const [description, setDescription] = useState(profile.description ?? "");
   const [capability, setCapability] = useState(profile.capabilityStatement ?? "");
   const [saving, setSaving] = useState(false);
@@ -964,16 +994,49 @@ function BrainReview({
 
         <Card padding={26} style={{ marginBottom: 18 }}>
           <SectionLabel>Correct the details</SectionLabel>
-          <label style={FIELD_LABEL}>Industry</label>
-          <Input
-            value={industry}
-            onChange={(e) => {
-              setIndustry(e.target.value);
-              setSaved(false);
+          <label style={{ ...FIELD_LABEL, marginBottom: 11 }}>Industry</label>
+          <div
+            style={{
+              display: "flex",
+              gap: 9,
+              flexWrap: "wrap",
+              marginBottom: industryOtherOpen ? 11 : 18,
             }}
-            placeholder="e.g. Health tech"
-            style={{ marginBottom: 18 }}
-          />
+          >
+            {INDUSTRY_OPTIONS.map((opt) => (
+              <OptionChip
+                key={opt}
+                label={opt}
+                selected={!industryOtherOpen && industry === opt}
+                onClick={() => {
+                  setIndustryOtherOpen(false);
+                  setIndustry(industry === opt ? "" : opt);
+                  setSaved(false);
+                }}
+              />
+            ))}
+            <OptionChip
+              label="Other"
+              selected={industryOtherOpen}
+              onClick={() => {
+                const opening = !industryOtherOpen;
+                setIndustryOtherOpen(opening);
+                if (opening && isKnownIndustry(industry)) setIndustry("");
+                setSaved(false);
+              }}
+            />
+          </div>
+          {industryOtherOpen && (
+            <Input
+              value={industry}
+              onChange={(e) => {
+                setIndustry(e.target.value);
+                setSaved(false);
+              }}
+              placeholder="Describe your industry"
+              style={{ marginBottom: 18 }}
+            />
+          )}
           <label style={FIELD_LABEL}>What you do</label>
           <Textarea
             value={description}
