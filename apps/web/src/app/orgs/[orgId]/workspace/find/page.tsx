@@ -637,9 +637,15 @@ function FeedRow({ item, index, orgId }: { item: DiscoveryItem; index: number; o
         >
           {item.name}
         </h3>
-        <div style={{ fontSize: 13, color: "var(--gr-muted-3)", marginBottom: item.why ? 12 : 11 }}>
+        <div style={{ fontSize: 13, color: "var(--gr-muted-3)", marginBottom: item.benefit ? 8 : item.why ? 12 : 11 }}>
           {item.funder ?? "Funder unknown"}
         </div>
+
+        {item.benefit && (
+          <p style={{ margin: "0 0 12px", fontSize: 13.5, color: "var(--gr-muted)", lineHeight: 1.5 }}>
+            {item.benefit}
+          </p>
+        )}
 
         {item.why && (
           <div
@@ -699,7 +705,7 @@ function FeedRow({ item, index, orgId }: { item: DiscoveryItem; index: number; o
             letterSpacing: "-.01em",
           }}
         >
-          {item.benefit ?? formatMoney(item.estValue)}
+          {formatMoney(item.estValue)}
         </div>
         <CtaButton
           label={item.cta}
