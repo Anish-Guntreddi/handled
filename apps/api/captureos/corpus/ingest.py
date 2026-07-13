@@ -142,15 +142,19 @@ _EMBED_MAX_ATTEMPTS = 5
 _EMBED_RATE_LIMIT_BACKOFF_SECONDS = 65.0  # safely past a per-minute quota window
 
 
-async def embed_pending(session: AsyncSession, *, batch_size: int = 100) -> int:
+async def embed_pending(session: AsyncSession, *, batch_size: int = 20) -> int:
     """Embed corpus chunks that have no vector yet, in batches. Run after configuring the
     embeddings key (EMBEDDINGS_PROVIDER=gemini + GEMINI_API_KEY) to populate the vector store.
 
-    The Gemini free tier enforces a PER-MINUTE embed-request quota (observed: 100 units/min,
-    where a single batch call apparently costs one unit per text embedded) — not merely a daily
-    cap. A `batch_size` at or near that ceiling trips it on every single call with zero pacing.
-    Each batch is retried with a fixed backoff on a rate-limit error, and paced afterward, so one
-    invocation can walk the entire backlog rather than making zero progress per call.
+    The Gemini free tier enforces a PER-MINUTE embed-request quota (observed limit: 100 units,
+    apparently ~1 unit per text embedded per call) — not merely a daily cap. This is a genuine
+    per-call volume ceiling, not just a matter of spacing repeated calls: a 100-chunk batch was
+    observed to fail 429 on 5 consecutive attempts spaced 65s apart (~5.5 minutes), meaning the
+    window tracking this quota doesn't simply clear 60s after each of *our* calls. A smaller
+    batch_size keeps each individual call safely under the ceiling regardless of that window's
+    exact mechanics. Each batch is still retried with backoff on a rate-limit error (transient
+    quota pressure from other usage) and paced between batches, so one invocation can walk the
+    entire backlog rather than making zero progress per call.
     """
     total = 0
     first_batch = True
