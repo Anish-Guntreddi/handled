@@ -42,7 +42,7 @@ class MockLLM(LLMProvider):
         system: str | None = None,
         json_schema: dict | None = None,
         temperature: float = 0.2,
-        max_output_tokens: int = 4096,
+        max_output_tokens: int = 8192,
     ) -> LLMResponse:
         digest = hashlib.sha256(f"{system or ''}\n{prompt}".encode()).hexdigest()[:12]
         if json_schema is not None:
@@ -85,16 +85,27 @@ class GeminiLLM(LLMProvider):
         system: str | None = None,
         json_schema: dict | None = None,
         temperature: float = 0.2,
-        max_output_tokens: int = 4096,
+        max_output_tokens: int = 8192,
     ) -> LLMResponse:  # pragma: no cover - requires live credentials
         from google.genai import types  # type: ignore
 
+        # 2.5-family models "think" before answering, and — unless capped — those thinking
+        # tokens are drawn from the SAME max_output_tokens budget as the visible response. For
+        # flash/bulk (cheap, extractive, schema-validated JSON — no reasoning needed), that
+        # silently truncates the JSON output mid-structure before the model finishes writing it
+        # (observed: schema validation failing on an EOF partway through a list). Both flash and
+        # flash-lite support disabling thinking outright; pro does not (requires a >0 budget), so
+        # it keeps the SDK default there.
+        thinking_config = (
+            types.ThinkingConfig(thinking_budget=0) if tier is not ModelTier.pro else None
+        )
         config = types.GenerateContentConfig(
             system_instruction=system,
             temperature=temperature,
             max_output_tokens=max_output_tokens,
             response_mime_type="application/json" if json_schema else None,
             response_schema=json_schema,
+            thinking_config=thinking_config,
         )
         model = self._model_for(tier)
         # google-genai is sync; run off the event loop.
@@ -154,7 +165,7 @@ class AnthropicLLM(LLMProvider):
         system: str | None = None,
         json_schema: dict | None = None,
         temperature: float = 0.2,  # noqa: ARG002 - part of the LLMProvider contract; Opus rejects it
-        max_output_tokens: int = 4096,
+        max_output_tokens: int = 8192,
     ) -> LLMResponse:  # pragma: no cover - requires live credentials
         model = self._model_for(tier)
         kwargs: dict = {
