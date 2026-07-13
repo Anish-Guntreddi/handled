@@ -5,10 +5,16 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
+import { Button, Card, CaptureOSLogo, Eyebrow, Input } from "@/components/captureos";
+import { captureosFontVars } from "@/lib/captureos-fonts";
 import { apiFetch } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import type { Me, Org } from "@/lib/types";
 
+// Org picker — shown to authenticated users who land at "/" (already-authed
+// visitors get bounced here from the landing page) or have no org yet.
+// Everyone else skips straight from /login to their org's workspace, so this
+// page mostly matters for multi-org accounts and the empty "no orgs yet" case.
 export default function DashboardPage() {
   const { isAuthenticated, loading, logout } = useAuth();
   const router = useRouter();
@@ -39,93 +45,102 @@ export default function DashboardPage() {
   }
 
   if (loading || !isAuthenticated) {
-    return <main className="grid min-h-screen place-items-center text-neutral-500">Loading…</main>;
+    return (
+      <div
+        className={`captureos ${captureosFontVars}`}
+        style={{ display: "grid", placeItems: "center", minHeight: "100vh", color: "var(--gr-muted)" }}
+      >
+        Loading…
+      </div>
+    );
   }
 
   const me = meQuery.data;
 
   return (
-    <main className="mx-auto max-w-3xl px-6 py-10">
-      <header className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">CaptureOS</h1>
-          <p className="text-sm text-neutral-500">
-            {me ? `Signed in as ${me.user.email}` : "Loading your account…"}
-          </p>
+    <div className={`captureos ${captureosFontVars}`} style={{ minHeight: "100vh" }}>
+      <style>{`
+        .gr-dashboard-org-card:hover { border-color: var(--gr-border-strong) !important; background: var(--gr-hover) !important; }
+      `}</style>
+      <div style={{ maxWidth: 640, margin: "0 auto", padding: "56px 24px 80px" }}>
+        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16, marginBottom: 40 }}>
+          <div>
+            <CaptureOSLogo markSize={28} wordmarkSize={18} />
+            <p style={{ margin: "10px 0 0", fontSize: 13.5, color: "var(--gr-muted-3)" }}>
+              {me ? `Signed in as ${me.user.email}` : "Loading your account…"}
+            </p>
+          </div>
+          <Button
+            variant="secondary"
+            onClick={() => {
+              logout();
+              router.replace("/login");
+            }}
+          >
+            Sign out
+          </Button>
         </div>
-        <button
-          onClick={() => {
-            logout();
-            router.replace("/login");
-          }}
-          className="rounded-lg border border-neutral-300 px-3 py-1.5 text-sm hover:bg-neutral-100"
-        >
-          Sign out
-        </button>
-      </header>
 
-      <section className="mt-8">
-        <h2 className="text-sm font-medium uppercase tracking-wide text-neutral-500">
-          Your organizations
-        </h2>
+        <Eyebrow style={{ marginBottom: 10 }}>Your organizations</Eyebrow>
 
-        {meQuery.isLoading && <p className="mt-3 text-sm text-neutral-500">Loading…</p>}
+        {meQuery.isLoading && <p style={{ fontSize: 13.5, color: "var(--gr-muted)" }}>Loading…</p>}
         {meQuery.isError && (
-          <p className="mt-3 text-sm text-red-600">Could not load organizations.</p>
+          <p style={{ fontSize: 13.5, color: "#F0A593" }}>Could not load organizations.</p>
         )}
 
-        <ul className="mt-3 space-y-2">
+        <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 20 }}>
           {me?.orgs.map((org) => (
-            <li key={org.orgId}>
-              <Link
-                href={`/orgs/${org.orgId}`}
-                className="flex items-center justify-between rounded-xl border border-neutral-200 bg-white px-4 py-3 transition hover:border-neutral-400 hover:bg-neutral-50"
+            <Link key={org.orgId} href={`/orgs/${org.orgId}/workspace/find`} style={{ textDecoration: "none" }}>
+              <Card
+                padding={18}
+                style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}
+                className="gr-dashboard-org-card"
               >
                 <div>
-                  <p className="font-medium">{org.name}</p>
-                  <p className="text-xs text-neutral-500">
+                  <p style={{ margin: 0, fontWeight: 700, fontSize: 14.5, color: "var(--gr-text-strong)" }}>
+                    {org.name}
+                  </p>
+                  <p style={{ margin: "2px 0 0", fontSize: 12, color: "var(--gr-muted-3)" }}>
                     Role: {org.role} · Plan: {org.plan}
                   </p>
                 </div>
-                <span className="text-sm text-neutral-400">Open →</span>
-              </Link>
-            </li>
+                <span style={{ fontSize: 13, color: "var(--gr-muted-2)" }}>Open →</span>
+              </Card>
+            </Link>
           ))}
           {me && me.orgs.length === 0 && (
-            <li className="rounded-xl border border-dashed border-neutral-300 px-4 py-6 text-center text-sm text-neutral-500">
-              No organizations yet. Create one below to get started.
-            </li>
+            <Card padding="26px 20px" style={{ borderStyle: "dashed", borderColor: "var(--gr-border-input)", textAlign: "center" }}>
+              <p style={{ margin: 0, fontSize: 13.5, color: "var(--gr-muted-3)" }}>
+                No organizations yet. Create one below to get started.
+              </p>
+            </Card>
           )}
-        </ul>
+        </div>
 
-        <form onSubmit={onCreateOrg} className="mt-4 flex gap-2">
-          <input
+        <form onSubmit={onCreateOrg} style={{ display: "flex", gap: 10 }}>
+          <Input
             value={orgName}
             onChange={(e) => setOrgName(e.target.value)}
             placeholder="New organization name"
-            className="flex-1 rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-900 focus:ring-1 focus:ring-neutral-900"
+            style={{ flex: 1 }}
           />
-          <button
-            type="submit"
-            disabled={createOrg.isPending || !orgName.trim()}
-            className="rounded-lg bg-neutral-900 px-4 py-2 text-sm font-medium text-white hover:bg-neutral-700 disabled:opacity-50"
-          >
+          <Button type="submit" variant="primary" disabled={createOrg.isPending || !orgName.trim()}>
             {createOrg.isPending ? "Creating…" : "Create"}
-          </button>
+          </Button>
         </form>
         {createOrg.isError && (
-          <p className="mt-2 text-sm text-red-600">Could not create organization.</p>
+          <p style={{ marginTop: 8, fontSize: 13, color: "#F0A593" }}>Could not create organization.</p>
         )}
-      </section>
 
-      <footer className="mt-12 rounded-xl border border-neutral-200 bg-white p-4 text-sm text-neutral-500">
-        Open an organization to access the Company Brain, opportunity scanning, filings, audit,
-        and billing.{" "}
-        <Link href="/how-it-works" className="text-neutral-600 underline hover:text-neutral-900">
-          How CaptureOS works
-        </Link>
-        .
-      </footer>
-    </main>
+        <p style={{ marginTop: 40, fontSize: 12.5, color: "var(--gr-muted-3)", lineHeight: 1.6 }}>
+          Open an organization to access the Company Brain, opportunity scanning, filings, audit,
+          and billing.{" "}
+          <Link href="/#how" style={{ color: "var(--gr-muted-2)", textDecoration: "underline" }}>
+            How CaptureOS works
+          </Link>
+          .
+        </p>
+      </div>
+    </div>
   );
 }

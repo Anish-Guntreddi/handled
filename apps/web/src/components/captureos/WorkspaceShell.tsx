@@ -8,8 +8,12 @@ import { useAuth } from "@/lib/auth";
 import { CaptureOSHeader, type WorkspaceTab } from "./Header";
 
 // Derives the active workspace tab from the current pathname so the header can
-// highlight it. Defaults to "find" (the workspace landing surface).
-function activeTabFromPath(pathname: string): WorkspaceTab {
+// highlight it. Audit/Billing sit outside the Find/Copilot/Pursue/Stay job-
+// based IA (reachable via the header's secondary links from anywhere), so
+// neither should falsely highlight a primary tab. Defaults to "find" for
+// everything else (the workspace landing surface).
+function activeTabFromPath(pathname: string): WorkspaceTab | null {
+  if (pathname.includes("/audit") || pathname.includes("/billing")) return null;
   if (pathname.includes("/workspace/copilot")) return "copilot";
   if (pathname.includes("/workspace/pursue")) return "pursue";
   if (pathname.includes("/workspace/stay")) return "stay";

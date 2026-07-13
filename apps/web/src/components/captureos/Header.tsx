@@ -16,6 +16,29 @@ const TABS: { slug: WorkspaceTab; label: string }[] = [
   { slug: "stay", label: "Stay eligible" },
 ];
 
+// Secondary header link (Audit, Billing) — lower visual weight than the
+// primary workspace tabs since neither is part of the Find/Copilot/Pursue/
+// Stay job-based IA; both live one level down, reachable from every surface.
+function SecondaryLink({ href, label }: { href: string; label: string }) {
+  const [hover, setHover] = useState(false);
+  return (
+    <Link
+      href={href}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      style={{
+        fontSize: 13,
+        fontWeight: 600,
+        color: hover ? "var(--gr-heading)" : "var(--gr-muted-3)",
+        textDecoration: "none",
+        transition: "color .12s ease",
+      }}
+    >
+      {label}
+    </Link>
+  );
+}
+
 function NavTab({
   href,
   label,
@@ -140,7 +163,7 @@ export function CaptureOSHeader({
   initials = "GR",
 }: {
   orgId: string;
-  activeTab: WorkspaceTab;
+  activeTab: WorkspaceTab | null;
   profilePct?: number;
   initials?: string;
 }) {
@@ -174,6 +197,11 @@ export function CaptureOSHeader({
         </nav>
 
         <div style={{ flex: 1 }} />
+
+        <div style={{ display: "flex", gap: 18 }}>
+          <SecondaryLink href={`/orgs/${orgId}/workspace/audit`} label="Audit" />
+          <SecondaryLink href={`/orgs/${orgId}/workspace/billing`} label="Billing" />
+        </div>
 
         <ProfileRingButton href={`/orgs/${orgId}/onboarding`} pct={profilePct} />
 
