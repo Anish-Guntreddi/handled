@@ -53,3 +53,6 @@ coverage/
 
 # Local Claude Code session settings
 .claude/
+
+# Playwright MCP browser-testing artifacts (screenshots/console logs)
+.playwright-mcp/

@@ -23,7 +23,7 @@ const FIELD_BASE: CSSProperties = {
 };
 
 const FOCUS: CSSProperties = {
-  borderColor: "var(--gr-green)",
+  border: "1px solid var(--gr-green)",
   boxShadow: "0 0 0 3px rgba(46,158,102,.22)",
 };
 

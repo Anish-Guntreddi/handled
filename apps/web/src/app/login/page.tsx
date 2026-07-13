@@ -4,12 +4,18 @@ import { useState, type FormEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 
+import { Button, Card, CaptureOSLogo, Eyebrow, Input } from "@/components/captureos";
+import { captureosFontVars } from "@/lib/captureos-fonts";
 import { apiFetch, errorMessage } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import type { Me } from "@/lib/types";
 
 type Mode = "login" | "register";
 
+// Sign in / register — the CaptureOS front door. Themed identically to the
+// onboarding wizard (same `.captureos` tokens, weave background, Card/Input/
+// Button primitives) so there's no jarring light-theme flash between the
+// landing page and the app behind it.
 export default function LoginPage() {
   const { login, register } = useAuth();
   const router = useRouter();
@@ -58,83 +64,120 @@ export default function LoginPage() {
   }
 
   return (
-    <main className="grid min-h-screen place-items-center p-6">
-      <div className="w-full max-w-sm rounded-2xl border border-neutral-200 bg-white p-8 shadow-sm">
-        <h1 className="text-xl font-semibold tracking-tight">CaptureOS</h1>
-        <p className="mt-1 text-sm text-neutral-500">
-          {mode === "login" ? "Sign in to your account" : "Create your account"}
-        </p>
+    <div
+      className={`captureos ${captureosFontVars} gr-weave`}
+      style={{
+        minHeight: "100vh",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 24,
+      }}
+    >
+      <Link href="/" style={{ textDecoration: "none", marginBottom: 30 }}>
+        <CaptureOSLogo markSize={30} wordmarkSize={20} />
+      </Link>
 
-        <form onSubmit={onSubmit} className="mt-6 space-y-3">
-          {mode === "register" && (
-            <Field
-              label="Full name"
-              value={fullName}
-              onChange={setFullName}
-              placeholder="Jane Doe"
-            />
-          )}
-          <Field
-            label="Email"
-            type="email"
-            value={email}
-            onChange={setEmail}
-            placeholder="you@company.com"
-            required
-          />
-          <Field
-            label="Password"
-            type="password"
-            value={password}
-            onChange={setPassword}
-            placeholder="••••••••"
-            required
-            minLength={mode === "register" ? 8 : undefined}
-            hint={mode === "register" ? "At least 8 characters." : undefined}
-          />
-          {mode === "register" && (
-            <Field
-              label="Organization (optional)"
-              value={orgName}
-              onChange={setOrgName}
-              placeholder="Acme LLC"
-            />
-          )}
+      <div style={{ width: "100%", maxWidth: 400 }}>
+        <Card padding={32}>
+          <Eyebrow style={{ marginBottom: 8 }}>{mode === "login" ? "Welcome back" : "Get started"}</Eyebrow>
+          <h1
+            style={{
+              fontFamily: "var(--gr-font-serif)",
+              fontSize: 28,
+              fontWeight: 400,
+              color: "var(--gr-heading)",
+              margin: "0 0 24px",
+            }}
+          >
+            {mode === "login" ? "Sign in to your account" : "Create your account"}
+          </h1>
 
-          {error && (
-            <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>
-          )}
+          <form onSubmit={onSubmit} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            {mode === "register" && (
+              <Field label="Full name" value={fullName} onChange={setFullName} placeholder="Jane Doe" />
+            )}
+            <Field
+              label="Email"
+              type="email"
+              value={email}
+              onChange={setEmail}
+              placeholder="you@company.com"
+              required
+            />
+            <Field
+              label="Password"
+              type="password"
+              value={password}
+              onChange={setPassword}
+              placeholder="••••••••"
+              required
+              minLength={mode === "register" ? 8 : undefined}
+              hint={mode === "register" ? "At least 8 characters." : undefined}
+            />
+            {mode === "register" && (
+              <Field
+                label="Organization · optional"
+                value={orgName}
+                onChange={setOrgName}
+                placeholder="Acme LLC"
+              />
+            )}
+
+            {error && (
+              <p
+                role="alert"
+                style={{
+                  margin: 0,
+                  padding: "11px 14px",
+                  borderRadius: 9,
+                  background: "rgba(240,138,120,.12)",
+                  border: "1px solid rgba(240,138,120,.32)",
+                  color: "#F0A593",
+                  fontSize: 13.5,
+                  lineHeight: 1.5,
+                }}
+              >
+                {error}
+              </p>
+            )}
+
+            <Button type="submit" variant="primary" disabled={busy} style={{ width: "100%", justifyContent: "center", marginTop: 4 }}>
+              {busy ? "Please wait…" : mode === "login" ? "Sign in" : "Create account"}
+            </Button>
+          </form>
 
           <button
-            type="submit"
-            disabled={busy}
-            className="w-full rounded-lg bg-neutral-900 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-neutral-700 disabled:opacity-50"
+            type="button"
+            onClick={() => {
+              setMode(mode === "login" ? "register" : "login");
+              setError(null);
+            }}
+            style={{
+              marginTop: 18,
+              width: "100%",
+              textAlign: "center",
+              fontSize: 13.5,
+              color: "var(--gr-muted-2)",
+              background: "none",
+              border: "none",
+              cursor: "pointer",
+              fontFamily: "var(--gr-font-sans)",
+            }}
           >
-            {busy ? "Please wait…" : mode === "login" ? "Sign in" : "Create account"}
+            {mode === "login" ? "Need an account? Sign up" : "Already have an account? Sign in"}
           </button>
-        </form>
+        </Card>
 
-        <button
-          type="button"
-          onClick={() => {
-            setMode(mode === "login" ? "register" : "login");
-            setError(null);
-          }}
-          className="mt-4 w-full text-center text-sm text-neutral-500 hover:text-neutral-900"
-        >
-          {mode === "login"
-            ? "Need an account? Sign up"
-            : "Already have an account? Sign in"}
-        </button>
-
-        <p className="mt-6 border-t border-neutral-100 pt-4 text-center text-xs text-neutral-400">
+        <p style={{ marginTop: 22, textAlign: "center", fontSize: 12.5, color: "var(--gr-muted-3)" }}>
           New to CaptureOS?{" "}
-          <Link href="/how-it-works" className="text-neutral-600 underline hover:text-neutral-900">
+          <Link href="/#how" style={{ color: "var(--gr-muted-2)", textDecoration: "underline" }}>
             See how it works
           </Link>
         </p>
       </div>
-    </main>
+    </div>
   );
 }
 
@@ -158,18 +201,34 @@ function Field({
   hint?: string;
 }) {
   return (
-    <label className="block text-sm">
-      <span className="text-neutral-700">{label}</span>
-      <input
+    <label style={{ display: "block" }}>
+      <span
+        style={{
+          display: "block",
+          fontFamily: "var(--gr-font-mono)",
+          fontSize: 10.5,
+          fontWeight: 600,
+          letterSpacing: ".1em",
+          textTransform: "uppercase",
+          color: "var(--gr-muted-2)",
+          marginBottom: 8,
+        }}
+      >
+        {label}
+      </span>
+      <Input
         type={type}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
         required={required}
         minLength={minLength}
-        className="mt-1 w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-neutral-900 focus:ring-1 focus:ring-neutral-900"
       />
-      {hint && <span className="mt-1 block text-xs text-neutral-400">{hint}</span>}
+      {hint && (
+        <span style={{ display: "block", marginTop: 6, fontSize: 12, color: "var(--gr-muted-3)" }}>
+          {hint}
+        </span>
+      )}
     </label>
   );
 }
