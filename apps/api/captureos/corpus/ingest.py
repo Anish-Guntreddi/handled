@@ -11,13 +11,17 @@ import hashlib
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 
+import anyio
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from captureos.ingestion.chunking import chunk_document
+from captureos.logging import get_logger
 from captureos.models.corpus import CorpusChunk, CorpusDocument
 from captureos.providers import get_embeddings
 from captureos.providers.base import ParsedDocument
+
+logger = get_logger(__name__)
 
 
 @dataclass(slots=True)
@@ -134,10 +138,22 @@ async def ingest_items(
     return counts
 
 
+_EMBED_MAX_ATTEMPTS = 5
+_EMBED_RATE_LIMIT_BACKOFF_SECONDS = 65.0  # safely past a per-minute quota window
+
+
 async def embed_pending(session: AsyncSession, *, batch_size: int = 100) -> int:
     """Embed corpus chunks that have no vector yet, in batches. Run after configuring the
-    embeddings key (EMBEDDINGS_PROVIDER=gemini + GEMINI_API_KEY) to populate the vector store."""
+    embeddings key (EMBEDDINGS_PROVIDER=gemini + GEMINI_API_KEY) to populate the vector store.
+
+    The Gemini free tier enforces a PER-MINUTE embed-request quota (observed: 100 units/min,
+    where a single batch call apparently costs one unit per text embedded) — not merely a daily
+    cap. A `batch_size` at or near that ceiling trips it on every single call with zero pacing.
+    Each batch is retried with a fixed backoff on a rate-limit error, and paced afterward, so one
+    invocation can walk the entire backlog rather than making zero progress per call.
+    """
     total = 0
+    first_batch = True
     while True:
         chunks = (
             (
@@ -150,9 +166,40 @@ async def embed_pending(session: AsyncSession, *, batch_size: int = 100) -> int:
         )
         if not chunks:
             break
-        result = await get_embeddings().embed([c.text for c in chunks])
+
+        if not first_batch:
+            await anyio.sleep(_EMBED_RATE_LIMIT_BACKOFF_SECONDS)
+        first_batch = False
+
+        texts = [c.text for c in chunks]
+        for attempt in range(_EMBED_MAX_ATTEMPTS):
+            try:
+                result = await get_embeddings().embed(texts)
+                break
+            except Exception as exc:  # noqa: BLE001 - provider errors vary; retry is the point
+                if attempt == _EMBED_MAX_ATTEMPTS - 1:
+                    logger.warning(
+                        "corpus.embed_batch_abandoned",
+                        embedded_so_far=total,
+                        pending_at_least=len(chunks),
+                        error=str(exc),
+                    )
+                    return total
+                logger.warning(
+                    "corpus.embed_batch_retry",
+                    attempt=attempt,
+                    batch_size=len(chunks),
+                    error=str(exc),
+                )
+                await anyio.sleep(_EMBED_RATE_LIMIT_BACKOFF_SECONDS)
+
         for chunk, vector in zip(chunks, result.vectors, strict=True):
             chunk.embedding = vector
-        await session.flush()
+        # Commit (not just flush) per batch: a full backfill can run for an hour-plus paced
+        # around a per-minute rate limit, and the caller's outer session_scope() only commits
+        # once at the very end. Without an incremental commit here, any interruption mid-run
+        # (process kill, host sleep, a batch that exhausts its retries) would silently discard
+        # every already-embedded batch, not just the tail — durability, not just progress.
+        await session.commit()
         total += len(chunks)
     return total
