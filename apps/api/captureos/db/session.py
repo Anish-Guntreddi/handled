@@ -28,6 +28,11 @@ def get_engine() -> AsyncEngine:
         echo=settings.db_echo,
         pool_pre_ping=True,
         future=True,
+        # Neon's pooled connection runs PgBouncer in transaction mode, which is incompatible
+        # with asyncpg's server-side prepared statement cache (DuplicatePreparedStatementError
+        # under load). Disabling it is a safe no-op against any non-pooled Postgres (local
+        # Docker, CI), so this applies unconditionally rather than behind an env-specific flag.
+        connect_args={"statement_cache_size": 0},
     )
 
 

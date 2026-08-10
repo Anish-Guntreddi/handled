@@ -1,0 +1,19 @@
+# CaptureOS frontend (apps/web) — Netlify monorepo config.
+#
+# `base` scopes the build to apps/web (Netlify's package-directory concept); the
+# install step still runs from the pnpm workspace root Netlify auto-detects above
+# `base`, so the workspace lockfile resolves correctly. Do NOT set `publish` —
+# the Next.js Runtime (OpenNext-based) derives it from the build itself; pointing
+# it at `.next/out` would silently disable SSR/Server Actions/streaming.
+[build]
+  base = "apps/web"
+  command = "pnpm build"
+  # Skip a build entirely when a commit only touches apps/api (or docs/, etc.) —
+  # paths here are relative to the REPO ROOT regardless of `base`, per Netlify's
+  # ignore-command docs. Saves credits under the 2026 credit-metered pricing.
+  ignore = "git diff --quiet $CACHED_COMMIT_REF $COMMIT_REF -- apps/web/"
+
+[build.environment]
+  # Avoids stale-client/new-server mismatches mid-deploy (requires Next.js >=14.1.4;
+  # this app is on 16). See Netlify's Next.js Runtime skew-protection docs.
+  NETLIFY_NEXT_SKEW_PROTECTION = "true"
