@@ -64,6 +64,11 @@ class ValidationFailed(AppError):
     status_code = status.HTTP_422_UNPROCESSABLE_CONTENT
 
 
+class RateLimitedError(AppError):
+    code = "rate_limited"
+    status_code = status.HTTP_429_TOO_MANY_REQUESTS
+
+
 def _body(code: str, message: str, details: Any = None) -> dict:
     err: dict[str, Any] = {"code": code, "message": message}
     if details is not None:

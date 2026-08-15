@@ -67,3 +67,22 @@ async def test_short_password_rejected(client: AsyncClient) -> None:
         "/api/v1/auth/register", json={"email": "f@example.com", "password": "short"}
     )
     assert resp.status_code == 422
+
+
+async def test_login_rate_limited_after_repeated_attempts(client: AsyncClient) -> None:
+    from captureos.config import get_settings
+
+    await register(client, "g@example.com")
+    limit = get_settings().auth_rate_limit_attempts
+
+    for _ in range(limit):
+        resp = await client.post(
+            "/api/v1/auth/login", json={"email": "g@example.com", "password": "wrong"}
+        )
+        assert resp.status_code == 401
+
+    blocked = await client.post(
+        "/api/v1/auth/login", json={"email": "g@example.com", "password": "wrong"}
+    )
+    assert blocked.status_code == 429
+    assert blocked.json()["error"]["code"] == "rate_limited"

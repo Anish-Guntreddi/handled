@@ -7,13 +7,14 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Annotated
 
-from fastapi import Depends, Path
+from fastapi import Depends, Path, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from captureos.auth import get_auth_provider
 from captureos.core.errors import AuthError, ForbiddenError, NotFoundError
+from captureos.core.ratelimit import check_rate_limit
 from captureos.db.session import get_session
 from captureos.models.enums import OrgRole
 from captureos.models.org import Organization, OrgMember, User
@@ -22,6 +23,24 @@ bearer_scheme = HTTPBearer(auto_error=False)
 
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
 BearerDep = Annotated[HTTPAuthorizationCredentials | None, Depends(bearer_scheme)]
+
+
+def auth_rate_limit(action: str) -> Callable[..., None]:
+    """Dependency factory: bounds the *rate* of attempts a single client IP can make
+    against a given auth action, which Argon2's per-guess cost alone does not (a
+    brute-forceable login is a real credential-exposure risk). ``login`` and
+    ``register`` are tracked separately — credential-guessing and signup/enumeration
+    spam are different threats and one shouldn't burn the other's budget."""
+
+    def dependency(request: Request) -> None:
+        ip = request.client.host if request.client else "unknown"
+        check_rate_limit(f"{action}:{ip}")
+
+    return dependency
+
+
+LoginRateLimit = Annotated[None, Depends(auth_rate_limit("login"))]
+RegisterRateLimit = Annotated[None, Depends(auth_rate_limit("register"))]
 
 _ROLE_ORDER = {OrgRole.viewer: 0, OrgRole.editor: 1, OrgRole.owner: 2}
 

@@ -55,6 +55,7 @@ from sqlalchemy import create_engine, text  # noqa: E402
 from sqlalchemy.engine import make_url  # noqa: E402
 
 import captureos.models  # noqa: E402, F401  (registers tables on metadata)
+from captureos.core.ratelimit import reset_rate_limits  # noqa: E402
 from captureos.db.base import Base  # noqa: E402
 from captureos.db.session import get_engine, get_sessionmaker  # noqa: E402
 from captureos.providers import reset_providers  # noqa: E402
@@ -98,6 +99,7 @@ async def _isolation() -> AsyncIterator[None]:
     get_engine.cache_clear()
     get_sessionmaker.cache_clear()
     reset_providers()
+    reset_rate_limits()
 
     engine = get_engine()
     tables = ", ".join(f'"{t.name}"' for t in Base.metadata.sorted_tables)
