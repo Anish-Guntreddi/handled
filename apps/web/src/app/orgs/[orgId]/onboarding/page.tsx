@@ -3,18 +3,21 @@
 import {
   useCallback,
   useEffect,
+  useRef,
   useState,
   type CSSProperties,
   type ReactNode,
 } from "react";
+import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
+import { useQuery } from "@tanstack/react-query";
 
 import { Button, Card, Eyebrow, CaptureOSLogo, Input, Textarea } from "@/components/captureos";
 import { ApiError, apiDownload, apiFetch, errorMessage, pollWorkflowRun } from "@/lib/api";
 import { captureosFontVars } from "@/lib/captureos-fonts";
 import { useAuth } from "@/lib/auth";
 import { INDUSTRY_OPTIONS, isKnownIndustry } from "@/lib/industries";
-import type { CompanyProfile, WorkflowRunCreated } from "@/lib/types";
+import type { CompanyProfile, Me, WorkflowRunCreated } from "@/lib/types";
 
 // Onboarding wizard — the profile capture that seeds the Company Brain before the
 // first money scan. Self-themed (it sits outside the `.captureos` workspace layout),
@@ -201,6 +204,54 @@ export default function OnboardingPage() {
     if (!loading && !isAuthenticated) router.replace("/login");
   }, [loading, isAuthenticated, router]);
 
+  // Pre-fill from any existing profile so re-entering onboarding to change one thing
+  // doesn't start from a blank form. Only fields with a clean, unambiguous source on
+  // CompanyProfile are prefilled (employees/revenue/ownership/activities have no
+  // corresponding stored field — left blank rather than guessed).
+  const meQuery = useQuery({
+    queryKey: ["me"],
+    queryFn: () => apiFetch<Me>("/auth/me"),
+    enabled: isAuthenticated,
+  });
+  const profileQuery = useQuery({
+    queryKey: ["company-profile", orgId],
+    queryFn: () => apiFetch<CompanyProfile>(`/orgs/${orgId}/company-profile`),
+    enabled: isAuthenticated,
+  });
+  // Two independent one-time prefills — the org name doesn't depend on a company
+  // profile existing, so a missing/not-yet-created profile must not block it too.
+  // Each runs once, on first success only — never re-applies on a later refetch
+  // (e.g. window refocus), so it can't clobber edits already in progress.
+  const namePrefilled = useRef(false);
+  useEffect(() => {
+    if (namePrefilled.current || !meQuery.isSuccess) return;
+    const orgName = meQuery.data.orgs.find((o) => o.orgId === orgId)?.name;
+    if (!orgName) return;
+    namePrefilled.current = true;
+    // The ref guard above makes this a genuine one-time sync, not the repeated/cascading
+    // setState-per-render the rule protects against — there's no lazy-initializer form of
+    // this (the query hasn't resolved at mount), so an effect is the correct tool here.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setData((prev) => ({ ...prev, companyName: orgName }));
+  }, [meQuery.isSuccess, meQuery.data, orgId]);
+
+  const profilePrefilled = useRef(false);
+  useEffect(() => {
+    if (profilePrefilled.current || !profileQuery.isSuccess) return;
+    profilePrefilled.current = true;
+    const p = profileQuery.data;
+    setData((prev) => ({
+      ...prev,
+      doWhat: p.description ?? prev.doWhat,
+      industry: p.industry ?? prev.industry,
+      location: p.location ?? prev.location,
+      websiteUrl: p.websiteUrl ?? prev.websiteUrl,
+      naicsCode: p.naicsGuesses[0]?.code ?? prev.naicsCode,
+      customers: p.targetCustomers.length > 0 ? p.targetCustomers : prev.customers,
+      funding: p.fundingCategories.length > 0 ? p.fundingCategories : prev.funding,
+    }));
+  }, [profileQuery.isSuccess, profileQuery.data]);
+
   const set = useCallback(
     <K extends keyof WizardState>(key: K, value: WizardState[K]) =>
       setData((prev) => ({ ...prev, [key]: value })),
@@ -340,7 +391,9 @@ export default function OnboardingPage() {
             marginBottom: 34,
           }}
         >
-          <CaptureOSLogo markSize={30} wordmarkSize={20} />
+          <Link href="/" style={{ textDecoration: "none" }}>
+            <CaptureOSLogo markSize={30} wordmarkSize={20} />
+          </Link>
         </div>
 
         <Eyebrow color="var(--gr-muted-2)" style={{ letterSpacing: ".14em", marginBottom: 10 }}>
@@ -910,7 +963,9 @@ function BrainReview({
     >
       <div style={{ width: "100%", maxWidth: 640 }}>
         <div style={{ display: "flex", justifyContent: "center", gap: 11, marginBottom: 30 }}>
-          <CaptureOSLogo markSize={30} wordmarkSize={20} />
+          <Link href="/" style={{ textDecoration: "none" }}>
+            <CaptureOSLogo markSize={30} wordmarkSize={20} />
+          </Link>
         </div>
 
         <Eyebrow color="var(--gr-muted-2)" style={{ letterSpacing: ".14em", marginBottom: 10 }}>
@@ -1190,7 +1245,7 @@ function LoadingScreen({ companyName }: { companyName: string }) {
         Finding the money you qualify for…
       </h2>
       <p style={{ margin: "0 0 30px", color: "var(--gr-muted)", fontSize: 15, textAlign: "center" }}>
-        Matching {who} against every federal &amp; state program.
+        {`Matching ${who} against every federal & state program.`}
       </p>
       <div style={{ display: "flex", flexDirection: "column", gap: 12, width: "100%", maxWidth: 360 }}>
         {SCAN_LINES.map((line) => (
