@@ -128,8 +128,7 @@ Then restart the API. Notes:
   retrieved; Claude only ever sees the retrieved *text*. Mixing the two is a standard, supported
   pairing — there is no compatibility constraint between them.
 - **Cost.** Embeddings are a rounding error (~$0.02–0.15 /1M tokens, embedded once at ingest); the
-  spend is the LLM, controlled per-agent by each agent's `tier` (`pro`→Opus, `flash`→Haiku). See
-  `docs/orchestration.md`.
+  spend is the LLM, controlled per-agent by each agent's `tier` (`pro`→Opus, `flash`→Haiku).
 - **Dimension is sticky.** `EMBEDDING_DIM=768` matches `text-embedding-004` and the schema. Changing
   it after ingesting real documents requires a migration **and** re-embedding every chunk — so pick
   the model/dimension before loading production data.

@@ -7,8 +7,7 @@ useDefault = true
 [allowlist]
 description = "Known-safe test/dev fixtures, not real credentials"
 regexes = [
-  # Hardcoded JWT signing secret used only in pytest fixtures (apps/api/tests/conftest.py)
-  # and duplicated into a few .planning/gate/*.md transcript dumps of that file's contents.
+  # Hardcoded JWT signing secret used only in pytest fixtures (apps/api/tests/conftest.py).
   # Intentionally fake, never used outside CI/local test runs.
   '''test-secret-key-at-least-32-characters-long''',
 ]

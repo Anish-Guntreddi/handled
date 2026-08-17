@@ -48,8 +48,16 @@ coverage/
 .vscode/
 *.swp
 
-# ---- GSD planning artifacts that are machine-local ----
-.planning/todos/pending/*.local.md
+# ---- Planning / internal docs (always local, never committed) ----
+# This repo is public. Roadmaps, PRDs, research notes, and AI-agent planning
+# scratch space stay on your own machine so each contributor's in-flight plans
+# don't collide or leak into shared history. Keep working code and setup docs
+# in the tracked tree; put planning artifacts in one of these conventional
+# spots and git will never see them.
+.planning/
+docs/prd/
+docs/plans/
+*.local.md
 
 # Local Claude Code session settings
 .claude/

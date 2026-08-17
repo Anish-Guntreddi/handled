@@ -30,7 +30,7 @@ The US government gives hundreds of billions a year to small businesses (federal
 ```
 apps/api/   FastAPI backend — agents, workflows, corpus/RAG, endpoints, tests
 apps/web/   Next.js frontend — the CaptureOS app
-docs/       architecture, roadmaps, and strategy notes
+docs/       CLI tooling and deployment setup guides
 ```
 
 ## Run it locally (no API key required)
