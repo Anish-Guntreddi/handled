@@ -2,10 +2,25 @@
 
 import { useEffect, type ReactNode } from "react";
 import { useParams, usePathname, useRouter } from "next/navigation";
+import { useQuery } from "@tanstack/react-query";
 
+import { apiFetch } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
+import type { Me } from "@/lib/types";
 
 import { CaptureOSHeader, type WorkspaceTab } from "./Header";
+
+// Falls back to the email's first two characters when no name is set yet
+// (fullName is optional at registration).
+function initialsFor(user: { email: string; fullName: string | null }): string {
+  const name = user.fullName?.trim();
+  if (name) {
+    const parts = name.split(/\s+/).filter(Boolean);
+    if (parts.length >= 2) return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+    return parts[0].slice(0, 2).toUpperCase();
+  }
+  return user.email.slice(0, 2).toUpperCase();
+}
 
 // Derives the active workspace tab from the current pathname so the header can
 // highlight it. Audit/Billing sit outside the Find/Copilot/Pursue/Stay job-
@@ -35,6 +50,13 @@ export function WorkspaceShell({ children }: { children: ReactNode }) {
     if (!loading && !isAuthenticated) router.replace("/login");
   }, [loading, isAuthenticated, router]);
 
+  const meQuery = useQuery({
+    queryKey: ["me"],
+    queryFn: () => apiFetch<Me>("/auth/me"),
+    enabled: isAuthenticated,
+  });
+  const initials = meQuery.data ? initialsFor(meQuery.data.user) : undefined;
+
   if (loading || !isAuthenticated) {
     return (
       <div style={{ display: "grid", minHeight: "100vh", placeItems: "center", color: "var(--gr-muted-3)" }}>
@@ -45,7 +67,7 @@ export function WorkspaceShell({ children }: { children: ReactNode }) {
 
   return (
     <>
-      <CaptureOSHeader orgId={orgId} activeTab={activeTabFromPath(pathname)} />
+      <CaptureOSHeader orgId={orgId} activeTab={activeTabFromPath(pathname)} initials={initials} />
       <main style={{ maxWidth: 1160, margin: "0 auto", padding: "0 28px 90px" }}>{children}</main>
     </>
   );

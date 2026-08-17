@@ -122,12 +122,15 @@ async def test_finalize_can_mark_a_failed_run() -> None:
 # --- Tier: the cheap high-volume `bulk` lane exists and maps to the cheap model ---------------
 
 
-async def test_bulk_tier_maps_to_a_distinct_cheap_model() -> None:
+async def test_bulk_tier_maps_to_a_cheap_model() -> None:
     settings = Settings()
     assert ModelTier.bulk.value == "bulk"
-    # bulk resolves to the flash-lite lane, distinct from flash/pro (so triage cost tunes alone).
-    assert settings.gemini_model_bulk == "gemini-2.5-flash-lite"
-    assert settings.gemini_model_bulk != settings.gemini_model_flash
+    # Was pinned to "gemini-2.5-flash-lite" as its own distinct lane; that model was retired
+    # (confirmed via live API: 404 "no longer available to new users"), so bulk falls back to
+    # flash until a replacement lite tier ships. The `bulk` tier/override mechanism itself
+    # (LLM_PROVIDER_BULK, GEMINI_MODEL_BULK) still works independently — only the *default*
+    # model name currently collapses onto flash.
+    assert settings.gemini_model_bulk == "gemini-2.5-flash"
     resp = await MockLLM(settings).generate("triage this", tier=ModelTier.bulk)
     assert resp.model.endswith(settings.gemini_model_bulk)
 

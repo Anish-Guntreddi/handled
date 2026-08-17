@@ -1,6 +1,6 @@
 # CaptureOS
 
-**Your government paperwork, captured.**
+**We handle the paperwork. You keep the money.**
 
 CaptureOS is an AI platform that handles government **compliance** for small businesses — so owners get their time back to build their business, and find the **money they're owed** along the way.
 
@@ -74,4 +74,4 @@ MVP — all surfaces built, wired to real endpoints, and **green** (API test sui
 [MIT](LICENSE)
 
 ---
-*AI-assisted, human-approved. CaptureOS prepares packages — it never submits them.*
+*CaptureOS prepares every filing. A human decides if and when it's submitted.*

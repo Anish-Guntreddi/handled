@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime, timedelta
+from typing import Literal
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,7 +27,7 @@ _DISCOVERY_KINDS = [
 ]
 
 
-def _eligibility(decision_hint: str | None) -> tuple[str, str, str]:
+def _eligibility(decision_hint: str | None) -> tuple[Literal["qualify", "likely"], str, str]:
     """(eligibility, label, cta) from the persisted decision hint."""
     if decision_hint == "apply":
         return "qualify", "You qualify", "Start"

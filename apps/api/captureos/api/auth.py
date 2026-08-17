@@ -10,7 +10,7 @@ from sqlalchemy import select
 
 from captureos.audit import record_event
 from captureos.config import AuthProviderName, get_settings
-from captureos.core.deps import CurrentUser, SessionDep
+from captureos.core.deps import CurrentUser, LoginRateLimit, RegisterRateLimit, SessionDep
 from captureos.core.errors import AuthError, ConflictError
 from captureos.core.security import (
     create_access_token,
@@ -44,7 +44,9 @@ def _ensure_local() -> None:
 
 
 @router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
-async def register(body: RegisterRequest, session: SessionDep) -> TokenResponse:
+async def register(
+    body: RegisterRequest, session: SessionDep, _rate_limit: RegisterRateLimit
+) -> TokenResponse:
     _ensure_local()
     existing = await session.execute(select(User).where(User.email == body.email.lower()))
     if existing.scalar_one_or_none() is not None:
@@ -75,7 +77,9 @@ async def register(body: RegisterRequest, session: SessionDep) -> TokenResponse:
 
 
 @router.post("/login", response_model=TokenResponse)
-async def login(body: LoginRequest, session: SessionDep) -> TokenResponse:
+async def login(
+    body: LoginRequest, session: SessionDep, _rate_limit: LoginRateLimit
+) -> TokenResponse:
     _ensure_local()
     result = await session.execute(select(User).where(User.email == body.email.lower()))
     user = result.scalar_one_or_none()

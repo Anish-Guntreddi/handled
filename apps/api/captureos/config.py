@@ -109,6 +109,11 @@ class Settings(BaseSettings):
     jwt_refresh_ttl_days: int = 14
     firebase_project_id: str | None = None
     google_application_credentials: str | None = None
+    # Brute-force guard on /auth/login + /auth/register: max attempts per client IP per
+    # window. Argon2 already makes each guess computationally expensive; this bounds the
+    # *rate* of guesses, which hashing cost alone does not.
+    auth_rate_limit_attempts: int = 10
+    auth_rate_limit_window_seconds: int = 60
 
     # ---- Database ----
     database_url: str = "postgresql+asyncpg://captureos:captureos@localhost:5432/captureos"
@@ -127,7 +132,9 @@ class Settings(BaseSettings):
     anthropic_model_flash: str = "claude-haiku-4-5"
     # `bulk` = the cheapest long-context lane for high-volume triage (the corpus-discovery Federal
     # Register sweep, WS2). Distinct from `flash` so triage cost can be tuned independently.
-    gemini_model_bulk: str = "gemini-2.5-flash-lite"
+    # NOTE: was "gemini-2.5-flash-lite" — retired (confirmed via live API: 404 "no longer
+    # available to new users"). Falls back to the flash model until a replacement lite tier ships.
+    gemini_model_bulk: str = "gemini-2.5-flash"
     anthropic_model_bulk: str = "claude-haiku-4-5"
     # Optional per-tier provider override (defaults to llm_provider). Lets the cheap "flash" lane
     # (doc extraction) and the "pro" lane (reasoning) run on DIFFERENT providers — e.g. Gemini

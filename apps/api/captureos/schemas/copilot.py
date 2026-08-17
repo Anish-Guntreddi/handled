@@ -6,6 +6,8 @@ funding programs as cards. Works on mock (no key) and with a real LLM when keys 
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import Field
 
 from captureos.schemas.common import CamelModel
@@ -25,7 +27,7 @@ class CopilotCard(CamelModel):
     name: str
     citation: str | None = None
     benefit: str | None = None
-    eligibility: str
+    eligibility: Literal["qualify", "likely"]
     eligibility_label: str
 
 

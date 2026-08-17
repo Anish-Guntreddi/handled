@@ -27,6 +27,7 @@ router = APIRouter(prefix="/orgs/{org_id}/company-profile", tags=["company-brain
 
 
 def _to_response(profile: CompanyProfile, evidence_count: int) -> CompanyProfileResponse:
+    overrides = profile.user_overrides or {}
     return CompanyProfileResponse(
         org_id=profile.org_id,
         website_url=profile.website_url,
@@ -41,6 +42,10 @@ def _to_response(profile: CompanyProfile, evidence_count: int) -> CompanyProfile
         capability_statement=profile.capability_statement,
         missing_fields=profile.missing_fields,
         evidence_count=evidence_count,
+        employees=overrides.get("employees"),
+        revenue=overrides.get("revenue"),
+        ownership=overrides.get("ownership") or [],
+        activities=overrides.get("activities") or [],
     )
 
 
