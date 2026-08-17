@@ -30,7 +30,7 @@ The US government gives hundreds of billions a year to small businesses (federal
 ```
 apps/api/   FastAPI backend — agents, workflows, corpus/RAG, endpoints, tests
 apps/web/   Next.js frontend — the CaptureOS app
-docs/       architecture, roadmaps, and strategy notes
+docs/       CLI tooling and deployment setup guides
 ```
 
 ## Run it locally (no API key required)
@@ -68,6 +68,10 @@ Now the Copilot and grounding cite real regulation text. Check `GET /corpus/stat
 ## Status
 
 MVP — all surfaces built, wired to real endpoints, and **green** (API test suite passing, web build clean). Runs on mock today; add keys for live reasoning and cited regulation text.
+
+## License
+
+[MIT](LICENSE)
 
 ---
 *AI-assisted, human-approved. CaptureOS prepares packages — it never submits them.*
