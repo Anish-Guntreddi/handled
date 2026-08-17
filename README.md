@@ -69,5 +69,9 @@ Now the Copilot and grounding cite real regulation text. Check `GET /corpus/stat
 
 MVP — all surfaces built, wired to real endpoints, and **green** (API test suite passing, web build clean). Runs on mock today; add keys for live reasoning and cited regulation text.
 
+## License
+
+[MIT](LICENSE)
+
 ---
 *AI-assisted, human-approved. CaptureOS prepares packages — it never submits them.*
