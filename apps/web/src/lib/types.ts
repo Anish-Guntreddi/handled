@@ -47,6 +47,10 @@ export type CompanyProfile = {
   capabilityStatement: string | null;
   missingFields: string[];
   evidenceCount: number;
+  employees: string | null;
+  revenue: string | null;
+  ownership: string[];
+  activities: string[];
 };
 
 export type WorkflowRunCreated = { workflowRunId: string };

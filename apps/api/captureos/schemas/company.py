@@ -33,6 +33,13 @@ class CompanyProfileResponse(CamelModel):
     capability_statement: str | None = None
     missing_fields: list = Field(default_factory=list)
     evidence_count: int = 0
+    # Wizard-only answers with no dedicated column — persisted in `user_overrides` (still the
+    # deterministic, user-provided signal the eligibility matching relies on) but previously never
+    # read back out here, so a re-onboarding owner would see them as if they'd never been saved.
+    employees: str | None = None
+    revenue: str | None = None
+    ownership: list[str] = Field(default_factory=list)
+    activities: list[str] = Field(default_factory=list)
 
 
 class ProfilePatch(CamelModel):

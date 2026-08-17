@@ -222,9 +222,16 @@ export default function OnboardingPage() {
   // profile existing, so a missing/not-yet-created profile must not block it too.
   // Each runs once, on first success only — never re-applies on a later refetch
   // (e.g. window refocus), so it can't clobber edits already in progress.
+  //
+  // They ALSO back off entirely once the user has touched anything (userEdited below) — a
+  // slow/late-resolving fetch racing against a fast click was a real bug: click a checkbox
+  // before the profile loads, then have the prefill silently overwrite it a moment later
+  // once the fetch finally resolves. Once the user has edited anything, no prefill should
+  // ever run again, no matter which field it targets.
+  const userEdited = useRef(false);
   const namePrefilled = useRef(false);
   useEffect(() => {
-    if (namePrefilled.current || !meQuery.isSuccess) return;
+    if (namePrefilled.current || userEdited.current || !meQuery.isSuccess) return;
     const orgName = meQuery.data.orgs.find((o) => o.orgId === orgId)?.name;
     if (!orgName) return;
     namePrefilled.current = true;
@@ -237,7 +244,7 @@ export default function OnboardingPage() {
 
   const profilePrefilled = useRef(false);
   useEffect(() => {
-    if (profilePrefilled.current || !profileQuery.isSuccess) return;
+    if (profilePrefilled.current || userEdited.current || !profileQuery.isSuccess) return;
     profilePrefilled.current = true;
     const p = profileQuery.data;
     setData((prev) => ({
@@ -246,15 +253,21 @@ export default function OnboardingPage() {
       industry: p.industry ?? prev.industry,
       location: p.location ?? prev.location,
       websiteUrl: p.websiteUrl ?? prev.websiteUrl,
-      naicsCode: p.naicsGuesses[0]?.code ?? prev.naicsCode,
-      customers: p.targetCustomers.length > 0 ? p.targetCustomers : prev.customers,
-      funding: p.fundingCategories.length > 0 ? p.fundingCategories : prev.funding,
+      naicsCode: p.naicsGuesses?.[0]?.code ?? prev.naicsCode,
+      customers: (p.targetCustomers ?? []).length > 0 ? p.targetCustomers : prev.customers,
+      funding: (p.fundingCategories ?? []).length > 0 ? p.fundingCategories : prev.funding,
+      employees: p.employees ?? prev.employees,
+      revenue: p.revenue ?? prev.revenue,
+      ownership: (p.ownership ?? []).length > 0 ? p.ownership : prev.ownership,
+      activities: (p.activities ?? []).length > 0 ? p.activities : prev.activities,
     }));
   }, [profileQuery.isSuccess, profileQuery.data]);
 
   const set = useCallback(
-    <K extends keyof WizardState>(key: K, value: WizardState[K]) =>
-      setData((prev) => ({ ...prev, [key]: value })),
+    <K extends keyof WizardState>(key: K, value: WizardState[K]) => {
+      userEdited.current = true;
+      setData((prev) => ({ ...prev, [key]: value }));
+    },
     [],
   );
 
