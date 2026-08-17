@@ -13,6 +13,7 @@ token-budget machinery stays intact and is simply not over-applied to a one-shot
 from __future__ import annotations
 
 import uuid
+from typing import Literal
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -35,7 +36,7 @@ from captureos.models.org import Organization
 _MAX_PROGRAMS = 6
 
 
-def _eligibility(decision_hint: str | None) -> tuple[str, str]:
+def _eligibility(decision_hint: str | None) -> tuple[Literal["qualify", "likely"], str]:
     """(eligibility, label) from the persisted decision hint — mirrors the discovery feed."""
     if decision_hint == "apply":
         return "qualify", "You qualify"

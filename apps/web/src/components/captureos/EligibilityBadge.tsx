@@ -21,6 +21,11 @@ const STYLES: Record<
   },
 };
 
+// Falls back to the "likely" style for any value outside the known set — the API contract
+// guarantees only "qualify" | "likely", but a rendering bug here shouldn't be able to take
+// down the whole page if that's ever violated (a stale client against a newer API, etc.).
+const FALLBACK_STYLE = STYLES.likely;
+
 export function EligibilityBadge({
   status,
   label,
@@ -28,7 +33,7 @@ export function EligibilityBadge({
   status: Eligibility;
   label?: string;
 }) {
-  const s = STYLES[status];
+  const s = STYLES[status] ?? FALLBACK_STYLE;
   return (
     <span
       style={{

@@ -9,6 +9,8 @@ programs as cards.
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 from captureos.agents.base import Agent, AgentContext
@@ -33,7 +35,7 @@ class CopilotProgram(BaseModel):
     name: str
     benefit: str | None = None
     citation: str | None = None
-    eligibility: str  # qualify | likely
+    eligibility: Literal["qualify", "likely"]
     eligibility_label: str
     why: str | None = None
 
@@ -59,7 +61,7 @@ class CopilotCard(BaseModel):
     name: str
     citation: str | None = None
     benefit: str | None = None
-    eligibility: str
+    eligibility: Literal["qualify", "likely"]
     eligibility_label: str
 
 
@@ -126,6 +128,8 @@ class CopilotAgent(Agent[CopilotInput, CopilotOutput]):
             f"Matched funding programs (attach the most relevant as cards):\n{programs}\n\n"
             "Return JSON: {answer, citations:[{label, locator, snippet}], "
             "cards:[{name, citation, benefit, eligibility, eligibility_label}], note}. "
+            "`eligibility` MUST be exactly the literal string \"qualify\" or \"likely\" — no other "
+            "value is valid, even if the true status feels more nuanced than that. "
             "Cite ONLY the snippets above (never invent a label). Attach up to 3 program cards. "
             "Set note=null."
         )

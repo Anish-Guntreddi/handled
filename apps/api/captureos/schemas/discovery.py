@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from typing import Literal
 
 from captureos.schemas.common import CamelModel
 
@@ -13,7 +14,7 @@ class DiscoveryItem(CamelModel):
     type_label: str
     name: str
     funder: str | None = None
-    eligibility: str  # qualify | likely
+    eligibility: Literal["qualify", "likely"]
     eligibility_label: str
     is_new: bool = False
     why: str | None = None
