@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# Blocks commits that stage a secret file or an obvious credential pattern.
+# Enable once per clone with:  git config core.hooksPath .githooks
+set -euo pipefail
+
+staged=$(git diff --cached --name-only --diff-filter=ACM)
+[ -z "$staged" ] && exit 0
+
+fail=0
+
+# Secret-shaped filenames slipping past .gitignore (e.g. a forced `git add -f`).
+while IFS= read -r f; do
+  [ -z "$f" ] && continue
+  case "$f" in
+    .env|.env.*|*.pem|*.key|service-account*.json|gcp-key*.json)
+      if [ "$f" != ".env.example" ]; then
+        echo "pre-commit: refusing to commit secret-shaped file: $f"
+        fail=1
+      fi
+      ;;
+  esac
+done <<< "$staged"
+
+# Prefer gitleaks if installed (real entropy/pattern detection across the staged diff).
+if command -v gitleaks >/dev/null 2>&1; then
+  if ! gitleaks protect --staged --redact --no-banner; then
+    fail=1
+  fi
+else
+  # Fallback: grep the staged diff for common key formats. Best-effort, not a substitute
+  # for gitleaks — see docs/cli-tools.md to install it.
+  pattern='sk-ant-api[0-9A-Za-z_-]{20,}|sk_live_[0-9A-Za-z]{20,}|sk_test_[0-9A-Za-z]{20,}|AIza[0-9A-Za-z_-]{35}|AKIA[0-9A-Z]{16}|whsec_[0-9A-Za-z]{20,}|-----BEGIN (RSA|EC|OPENSSH|PRIVATE) KEY-----'
+  if git diff --cached -U0 | grep -nE "$pattern" >/dev/null; then
+    echo "pre-commit: staged diff matches a credential-shaped pattern. Install gitleaks for a"
+    echo "  more thorough scan (docs/cli-tools.md), or if this is a false positive, commit with"
+    echo "  git commit --no-verify."
+    fail=1
+  fi
+fi
+
+exit $fail

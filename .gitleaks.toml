@@ -53,6 +53,4 @@ regexes = [
 paths = [
   # `.env.example` documents every knob with placeholder values, never real ones.
   '''^\.env\.example$''',
-  # Archived agent/codex review transcripts quote the test constants above verbatim.
-  '''^\.planning/gate/.*\.md$''',
 ]
